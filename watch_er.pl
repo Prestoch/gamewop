@@ -41,6 +41,28 @@ sub fetch_with_scrapedo {
   return http_get_text($api_url);
 }
 
+# Add JSON helpers (prefer API)
+my $CS_API_URL = $ENV{CYBERSCORE_API_URL} // 'https://api.cyberscore.live/api/v1/matches/?limit=20&liveOrUpcoming=1';
+
+sub http_get_json {
+  my ($url) = @_;
+  my $res = $http->get($url, { headers => { 'Accept' => 'application/json', 'User-Agent' => ($http->{agent}||'curl') } });
+  if ($res->{success} && defined $res->{content} && length $res->{content}) {
+    my $j = eval { decode_json($res->{content}) };
+    return $j if !$@ && defined $j;
+  }
+  return undef;
+}
+
+sub scrapedo_get_json {
+  my ($url) = @_;
+  return undef unless $SCRAPEDO_API_KEY;
+  my $raw = fetch_with_scrapedo($url);
+  return undef unless defined $raw && length $raw;
+  my $j = eval { decode_json($raw) };
+  return $@ ? undef : $j;
+}
+
 sub fetch_url {
   my ($url) = @_;
   my $html = '';
@@ -164,6 +186,82 @@ sub any_hero_adv_threshold {
   return $hit ? 1 : 0;
 }
 
+# API parsing: attempt to extract picks from CyberScore API JSON
+sub extract_picks_from_api_match {
+  my ($m) = @_;
+  my (@a,@b);
+  my $push_pick = sub {
+    my ($side, $hname) = @_;
+    return unless defined $hname && length $hname;
+    my $idx = hero_index_by_name($hname);
+    return unless $idx >= 0;
+    if ($side =~ /^(?:radiant|r|0)$/i) { push @a, $idx; }
+    elsif ($side =~ /^(?:dire|d|1)$/i) { push @b, $idx; }
+  };
+
+  # Common shapes: m.draft[], m.picks[], m.events[]
+  if (ref $m eq 'HASH') {
+    for my $key (qw/draft picks events/) {
+      if (ref $m->{$key} eq 'ARRAY') {
+        for my $e (@{ $m->{$key} }) {
+          next unless ref $e eq 'HASH';
+          # side/team
+          my $side = defined $e->{side} ? $e->{side} : (defined $e->{team} ? $e->{team} : (defined $e->{faction} ? $e->{faction} : ''));
+          # normalize side
+          if (defined $side && !ref $side) {
+            $side = lc($side);
+            $side = 'radiant' if $side =~ /^(?:radiant|r|0)$/;
+            $side = 'dire'    if $side =~ /^(?:dire|d|1)$/;
+          } else { $side = ''; }
+          # hero name fields
+          my $hname = $e->{hero} // $e->{hero_name} // $e->{heroName} // $e->{name} // '';
+          $hname = $hname->{name} if ref $hname eq 'HASH' && defined $hname->{name};
+          $hname = '' if ref $hname;
+          if ($hname) { $push_pick->($side||'', $hname); next; }
+        }
+      }
+    }
+    # sometimes under m.teams[].picks[]
+    if (ref $m->{teams} eq 'ARRAY') {
+      for my $t (@{ $m->{teams} }) {
+        next unless ref $t eq 'HASH';
+        my $side = lc($t->{side} // $t->{team} // '');
+        $side = 'radiant' if $side =~ /^(?:radiant|r|0)$/;
+        $side = 'dire'    if $side =~ /^(?:dire|d|1)$/;
+        if (ref $t->{picks} eq 'ARRAY') {
+          for my $p (@{ $t->{picks} }) {
+            next unless ref $p;
+            my $hn = $p->{hero} // $p->{name} // $p->{hero_name} // '';
+            $hn = $hn->{name} if ref $hn eq 'HASH' && defined $hn->{name};
+            $hn = '' if ref $hn;
+            $push_pick->($side||'', $hn) if $hn;
+          }
+        }
+      }
+    }
+  }
+
+  # limit to first 5 per team
+  @a = @a[0..4] if @a > 5; @b = @b[0..4] if @b > 5;
+  return (\@a, \@b);
+}
+
+sub poll_api_for_picks {
+  my $j = http_get_json($CS_API_URL);
+  $j ||= scrapedo_get_json($CS_API_URL);
+  return [] unless $j;
+  my @matches;
+  my $list = (ref $j eq 'HASH' && ref $j->{results} eq 'ARRAY') ? $j->{results} : (ref $j eq 'ARRAY' ? $j : []);
+  for my $m (@$list) {
+    next unless ref $m eq 'HASH';
+    my ($a,$b) = extract_picks_from_api_match($m);
+    next unless $a && $b && (scalar(@$a)+scalar(@$b)) >= 2;
+    my $url = $m->{url} || $m->{webUrl} || $m->{matchUrl} || '';
+    push @matches, { a => $a, b => $b, url => $url };
+  }
+  return \@matches;
+}
+
 sub parse_match_urls_from_home {
   my ($html) = @_;
   my %seen; my @urls;
@@ -241,10 +339,48 @@ sub main_loop {
   my %notified;
 
   while (1) {
+    # First try API
+    my $api_matches = poll_api_for_picks();
+    my $checked = 0; my $found = 0;
+    if ($api_matches && ref $api_matches eq 'ARRAY' && @$api_matches) {
+      for my $mm (@$api_matches) {
+        $checked++;
+        my ($a,$b) = ($mm->{a}, $mm->{b});
+        my $u = $mm->{url} || '';
+        my $key = join(',',@$a) . '|' . join(',',@$b);
+        next if $notified{$key}++;
+        $found++;
+        my $scoreA = team_score($a,$b);
+        my $scoreB = team_score($b,$a);
+        my $diff = $scoreA - $scoreB;
+        my @conds;
+        if ($ta_enabled && (defined $ta_min || defined $ta_max)) { my $ok=0; $ok ||= (defined $ta_min && $diff >= $ta_min); $ok ||= (defined $ta_max && $diff <= $ta_max); push @conds, $ok?1:0; }
+        if ($ha_enabled && defined $ha_thr) { my $ok = any_hero_adv_threshold($b, $ha_cond, $ha_thr); push @conds, $ok?1:0; }
+        if ($watch_heroes_enabled && scalar keys %watch_set) { my $ok=0; for my $hid (@$a, @$b) { next unless $hid>=0; my $nm = normalize_name($HEROES[$hid]||''); if ($watch_set{$nm}) { $ok=1; last; } } push @conds, $ok?1:0; }
+        my $should_alert = (!@conds) ? 0 : (($cond_logic eq 'all') ? ((grep { !$_ } @conds)?0:1) : ((grep { $_ } @conds)?1:0));
+        if ($should_alert) {
+          my $to = $settings->{email_to}||''; my $from = $settings->{email_from}||'';
+          my $subject = sprintf('[Dota Watcher] Picks alert (diff=%.2f)', $diff);
+          my $namesA = join(', ', map { $HEROES[$_] } @$a);
+          my $namesB = join(', ', map { $HEROES[$_] } @$b);
+          my $body = '';
+          $body .= "Match: $u\n" if $u;
+          $body .= sprintf("Diff (A-B): %.4f\n\n", $diff);
+          $body .= "Team A: $namesA\n";
+          $body .= "Team B: $namesB\n";
+          my $ok = send_email_via_sendmail(to=>$to, from=>$from, subject=>$subject, body=>$body);
+          if ($ok) { $st->{alerts} = ($st->{alerts}||0) + 1; $st->{last_alert_at} = time; save_status($st); print STDOUT "ALERT sent (API) diff=$diff\n"; }
+          else { print STDOUT "ALERT FAILED (API) diff=$diff\n"; }
+        } else { print STDOUT sprintf("No alert (API): diff=%.2f\n", $diff); }
+      }
+      $st->{last_poll} = time; $st->{last_checked} = $checked; $st->{last_found} = $found; save_status($st);
+      sleep($POLL_SECS); next;
+    }
+
+    # Fallback: HTML scrape
     my $home = fetch_url('https://cyberscore.live/en/');
     if (!$home) { warn "Failed to fetch cyberscore home\n"; sleep($POLL_SECS); next; }
     my $urls = parse_match_urls_from_home($home);
-    my $checked = 0; my $found = 0;
     URL: for my $u (@$urls) {
       next unless $u && $u =~ /match/i;
       $checked++;
