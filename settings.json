@@ -1,0 +1,10 @@
+{
+  "email_to": "",
+  "email_from": "",
+  "total_adv": { "cond": "gt", "threshold": 3.0 },
+  "win_prob":  { "cond": "gt", "threshold": 65.0 },
+  "color_cond": { "enabled": false },
+  "hero_adv": { "cond": "gt", "threshold": 6.0 },
+  "watch_heroes": []
+}
+
