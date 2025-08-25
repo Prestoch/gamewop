@@ -91,13 +91,13 @@
                     <label>Condition 1: Total advantage (left - right)</label>
                     <div class="checkbox"><label><input type="checkbox" id="cond1-enabled" checked> Enable</label></div>
                     <div class="form-inline">
-                      <select id="total-adv-cond" class="form-control">
-                        <option value="gt">greater than</option>
-                        <option value="lt">less than</option>
-                      </select>
-                      <input id="total-adv-threshold" type="number" step="0.01" class="form-control" style="width:120px" placeholder="e.g. 3.5">
+                      <label class="sr-only" for="total-adv-min">Greater than</label>
+                      <input id="total-adv-min" type="number" step="0.01" class="form-control" style="width:120px" placeholder="Greater than (e.g. 3.5)">
+                      <span style="margin:0 6px;">or</span>
+                      <label class="sr-only" for="total-adv-max">Less than</label>
+                      <input id="total-adv-max" type="number" step="0.01" class="form-control" style="width:120px" placeholder="Less than (e.g. -3.5)">
                     </div>
-                    <p class="help">Uses the scoreboard difference shown between teams on the main page.</p>
+                    <p class="help">Triggers if advantage ≥ min or ≤ max. Leave empty to ignore.</p>
                   </div>
                 </div>
                 <div class="col-sm-6">
@@ -237,8 +237,16 @@
           $('#condition-logic-all').prop('checked', (s.condition_logic || 'all') === 'all');
           $('#condition-logic-any').prop('checked', (s.condition_logic || 'all') === 'any');
           $('#cond1-enabled').prop('checked', !!(s.total_adv ? (s.total_adv.enabled!==false) : true));
-          $('#total-adv-cond').val((s.total_adv && s.total_adv.cond) || 'gt');
-          $('#total-adv-threshold').val((s.total_adv && s.total_adv.threshold) || '');
+          (function(){
+            var ta = s.total_adv || {};
+            var min = ta.min, max = ta.max;
+            var legacyCond = ta.cond || '';
+            var legacyThr = ta.threshold;
+            if ((min === undefined || min === null) && legacyCond === 'gt' && legacyThr !== undefined) { min = legacyThr; }
+            if ((max === undefined || max === null) && legacyCond === 'lt' && legacyThr !== undefined) { max = legacyThr; }
+            $('#total-adv-min').val((min !== undefined && min !== null) ? min : '');
+            $('#total-adv-max').val((max !== undefined && max !== null) ? max : '');
+          })();
           $('#cond2-enabled').prop('checked', !!(s.color_cond ? (s.color_cond.enabled!==false) : false));
           var vars = (s.color_cond && s.color_cond.variations) || [];
           $("input[name='color-variations']").each(function(){ $(this).prop('checked', vars.indexOf($(this).val())>=0); });
@@ -268,8 +276,8 @@
           condition_logic: $('#condition-logic-all').is(':checked') ? 'all' : 'any',
           total_adv: {
             enabled: $('#cond1-enabled').is(':checked'),
-            cond: $('#total-adv-cond').val(),
-            threshold: parseFloat($('#total-adv-threshold').val())
+            min: (function(v){ var x=parseFloat(v); return isNaN(x)?null:x; })($('#total-adv-min').val()),
+            max: (function(v){ var x=parseFloat(v); return isNaN(x)?null:x; })($('#total-adv-max').val())
           },
           color_cond: { enabled: $('#cond2-enabled').is(':checked'), variations: $("input[name='color-variations']:checked").map(function(){return $(this).val();}).get() },
           hero_adv: {
