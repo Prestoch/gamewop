@@ -62,6 +62,9 @@ sub run_generate {
 sub gen_pid_file    { return local_file('.gen_pid'); }
 sub gen_status_file { return local_file('.gen_status.json'); }
 sub gen_log_file    { return local_file('.gen_output.log'); }
+sub watch_pid_file  { return local_file('.watch_pid'); }
+sub watch_status_file { return local_file('.watch_status.json'); }
+sub watch_log_file  { return local_file('.watch_output.log'); }
 
 sub read_json_file {
   my ($path, $fallback) = @_;
@@ -385,6 +388,33 @@ sub main {
   } elsif ($method eq 'gen_reset') {
     my $ok = reset_generation();
     respond({ ok => $ok ? JSON::PP::true : JSON::PP::false });
+  } elsif ($method eq 'watch_start') {
+    my $pid = fork();
+    if (!defined $pid) { respond({ ok => JSON::PP::false, error => 'Fork failed' }); }
+    if ($pid) {
+      if (open my $pfh, '>', watch_pid_file()) { print $pfh $pid; close $pfh; }
+      respond({ ok => JSON::PP::true, pid => $pid });
+    }
+    # child
+    eval { require POSIX; POSIX::setsid(); };
+    $SIG{HUP} = 'IGNORE';
+    chdir($BASE_DIR);
+    open STDIN,  '<', '/dev/null';
+    open STDOUT, '>>', watch_log_file(); select STDOUT; $|=1;
+    open STDERR, '>>', watch_log_file(); $|=1;
+    exec('/usr/bin/env', 'perl', local_file('watch_er.pl'));
+    print STDERR "exec failed: $!\n"; exit 1;
+  } elsif ($method eq 'watch_status') {
+    my $st = read_json_file(watch_status_file(), { state => 'idle' });
+    my $tail = '';
+    if (open my $lfh, '<', watch_log_file()) { my $size = -s $lfh; my $max=20000; if ($size && $size > $max) { seek $lfh, $size - $max, 0; } local $/; $tail = <$lfh>; close $lfh; }
+    respond({ ok => JSON::PP::true, status => $st, tail => $tail });
+  } elsif ($method eq 'watch_reset') {
+    my $pid = 0; if (open my $pfh, '<', watch_pid_file()) { my $p = <$pfh>; close $pfh; $p =~ s/\D+//g; $pid = 0 + ($p||0); }
+    kill_pid($pid) if $pid;
+    unlink watch_pid_file(); unlink watch_log_file();
+    write_json_file(watch_status_file(), { state => 'idle' });
+    respond({ ok => JSON::PP::true });
   } else {
     respond({ ok => JSON::PP::false, error => 'Unknown method' });
   }
