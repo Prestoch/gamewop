@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>DotaBuffCP Admin</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/3.1.1/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/1.11.0/jquery.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/3.1.1/js/bootstrap.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/underscore.js/1.6.0/underscore-min.js"></script>
+     <script src="https://cdnjs.cloudflare.com/ajax/libs/backbone.js/1.1.2/backbone-min.js"></script>
+    <script src="cs.json"></script>
+    <style>
+      body { font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif; background:#0f1116; color:#d7dce2; }
+      body { font-size: 16px; }
+      h2, h4, label { color:#e5e9f0; }
+      .well { background:#161a22; border-color:#232833; }
+      .btn-primary { background:#e74c3c; border-color:#e74c3c; }
+      .btn-success { background:#2ecc71; border-color:#2ecc71; }
+      .progress { background:#232833; }
+      .progress-bar { background:#e67e22; }
+      .help { color:#9aa4b2; }
+      input.form-control, select.form-control { background:#0f1116; color:#e5e9f0; border-color:#2a3140; }
+      .checkbox-inline, .radio label { color:#cbd3dd; }
+      .alert-info { background:#141925; border-color:#232b3a; color:#cbd3dd; }
+      #watch-heroes-suggest .label:hover { background:#2d3544; }
+      .form-group label { font-weight: 600; }
+      .chips .chip { display:inline-block; margin:4px; padding:2px 6px; background:#232833; border:1px solid #2a3140; border-radius:16px; }
+      .chips .chip img { height:22px; width:auto; vertical-align:middle; margin-right:6px; border:1px solid #2a3140; }
+      .chips .chip .remove { cursor:pointer; margin-left:6px; color:#9aa4b2; }
+      .suggest-item.active { outline:1px solid #3b4557; box-shadow: 0 0 0 2px rgba(230,126,34,0.35) inset; }
+    </style>
+  </head>
+  <body>
+
+    <div class="container">
+      <div class="page-header">
+        <h2>DotaBuffCP Admin <small>generator + notifications</small></h2>
+      </div>
+
+      <div class="row section">
+        <div class="col-md-12">
+          <div class="well">
+            <h4>Data generation</h4>
+            <p class="help">Trigger building of <code>cs.json</code> using OpenDota (default) or Dotabuff (needs FlareSolverr). Generation runs on the server.</p>
+            <div class="form-inline">
+              <div class="form-group">
+                <label class="sr-only" for="gen-source">Source</label>
+                <select id="gen-source" class="form-control">
+                  <option value="opendota">OpenDota (recommended)</option>
+                  <option value="dotabuff">Dotabuff (scrape)</option>
+                </select>
+              </div>
+              <button id="btn-generate" class="btn btn-primary">Generate cs.json</button>
+              <span id="gen-status" class="status text-muted"></span>
+              <button id="btn-diagnostics" class="btn btn-default" style="margin-left:8px;">Diagnostics</button>
+            </div>
+            <div id="gen-log" class="hide">
+              <hr>
+              <div class="progress" style="height:20px; margin-bottom:10px;">
+                <div id="gen-progress" class="progress-bar progress-bar-striped active" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" style="width: 0%;">
+                  0%
+                </div>
+              </div>
+              <div id="gen-current" class="help" style="margin-bottom:8px;"></div>
+              <pre class="small" id="gen-output"></pre>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row section">
+        <div class="col-md-12">
+          <div class="well">
+            <h4>Email notifications</h4>
+            <div class="form-group">
+              <label>Notify when</label>
+              <div class="radio">
+                <label><input type="radio" name="cond-logic" id="condition-logic-all" checked> All selected conditions are met</label>
+              </div>
+              <div class="radio">
+                <label><input type="radio" name="cond-logic" id="condition-logic-any"> Any selected condition is met</label>
+              </div>
+            </div>
+            <form id="notify-form" class="form">
+              <div class="row">
+                <div class="col-sm-6">
+                  <div class="form-group">
+                    <label>Condition 1: Total advantage (left - right)</label>
+                    <div class="checkbox"><label><input type="checkbox" id="cond1-enabled" checked> Enable</label></div>
+                    <div class="form-inline">
+                      <select id="total-adv-cond" class="form-control">
+                        <option value="gt">greater than</option>
+                        <option value="lt">less than</option>
+                      </select>
+                      <input id="total-adv-threshold" type="number" step="0.01" class="form-control" style="width:120px" placeholder="e.g. 3.5">
+                    </div>
+                    <p class="help">Uses the scoreboard difference shown between teams on the main page.</p>
+                  </div>
+                </div>
+                <div class="col-sm-6">
+                   <div class="form-group">
+                    <!-- Removed Win probability condition -->
+                   </div>
+                 </div>
+              </div>
+
+              <div class="row">
+                <div class="col-sm-6">
+                  <div class="form-group">
+                    <label>Condition 2: Hero matchups color condition</label>
+                    <div class="checkbox"><label><input type="checkbox" id="cond2-enabled"> Enable</label></div>
+                    <div class="help">Select color patterns to alert on (+: green, -: red)</div>
+                    <div>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="5-5+">5-5+</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="5+5-">5+5-</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="5-4+">5-4+</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="5+4-">5+4-</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="5-3+">5-3+</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="5+3-">5+3-</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="5-2+">5-2+</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="5+2-">5+2-</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="5-1+">5-1+</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="5+1-">5+1-</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="4-5+">4-5+</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="4+5-">4+5-</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="4-4+">4-4+</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="4+4-">4+4-</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="4-3+">4-3+</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="4+3-">4+3-</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="4-2+">4-2+</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="4+2-">4+2-</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="4-1+">4-1+</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="4+1-">4+1-</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="3-5+">3-5+</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="3+5-">3+5-</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="3-4+">3-4+</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="3+4-">3+4-</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="3-3+">3-3+</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="3+3-">3+3-</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="3-2+">3-2+</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="3+2-">3+2-</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="3-1+">3-1+</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="3+1-">3+1-</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="2-5+">2-5+</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="2+5-">2+5-</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="2-4+">2-4+</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="2+4-">2+4-</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="2-3+">2-3+</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="2+3-">2+3-</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="2-2+">2-2+</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="2+2-">2+2-</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="2-1+">2-1+</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="2+1-">2+1-</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="1-5+">1-5+</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="1+5-">1+5-</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="1-4+">1-4+</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="1+4-">1+4-</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="1-3+">1-3+</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="1+3-">1+3-</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="1-2+">1-2+</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="1+2-">1+2-</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="1-1+">1-1+</label>
+                      <label class="checkbox-inline"><input type="checkbox" name="color-variations" value="1+1-">1+1-</label>
+                    </div>
+                  </div>
+                </div>
+                <div class="col-sm-6">
+                  <div class="form-group">
+                    <label>Condition 3: Per-hero advantage rule</label>
+                    <div class="checkbox"><label><input type="checkbox" id="cond3-enabled" checked> Enable</label></div>
+                    <div class="form-inline">
+                      <select id="hero-adv-cond" class="form-control">
+                        <option value="gt">advantage &gt;=</option>
+                        <option value="lt">advantage &lt;=</option>
+                      </select>
+                      <input id="hero-adv-threshold" type="number" step="0.01" class="form-control" style="width:120px" placeholder="e.g. 6">
+                    </div>
+                    <p class="help">If any hero meets this threshold vs the enemy lineup.</p>
+                  </div>
+                </div>
+              </div>
+
+              <div class="row">
+                <div class="col-sm-12">
+                  <div class="form-group">
+                    <label>Condition 4: Notify when these heroes are picked</label>
+                    <div class="checkbox"><label><input type="checkbox" id="cond4-enabled"> Enable</label></div>
+                    <input id="watch-heroes" type="text" class="form-control" placeholder="Type to search heroes; click icons to add">
+                    <div id="watch-heroes-chips" class="chips" style="margin-top:6px;"></div>
+                    <div id="watch-heroes-suggest" class="well" style="margin-top:6px; padding:6px; display:none;"></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="row">
+                <div class="col-sm-12">
+                  <button id="btn-save" type="submit" class="btn btn-success">Save settings</button>
+                  <span id="save-status" class="status text-muted"></span>
+                  <button id="btn-test" type="button" class="btn btn-default" style="margin-left:8px;">Send test email</button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      <div class="row section">
+        <div class="col-md-12">
+          <div class="alert alert-info">
+            API endpoint expected at <code>admin_api.pl</code> (Perl CGI) in the same directory. Adjust if deploying differently.
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <script>
+      function api(method, payload) {
+        var qp = $.param({ m: method, payload: JSON.stringify(payload || {}) });
+        return $.ajax({
+          url: 'admin_api.pl?' + qp,
+          method: 'GET',
+          dataType: 'json',
+          cache: false
+        });
+      }
+
+      function loadSettings() {
+        api('get_settings', {}).done(function (res) {
+          if (!res || !res.ok) return;
+          var s = res.settings || {};
+          $('#email-to').val(s.email_to || '');
+          $('#email-from').val(s.email_from || '');
+          $('#condition-logic-all').prop('checked', (s.condition_logic || 'all') === 'all');
+          $('#condition-logic-any').prop('checked', (s.condition_logic || 'all') === 'any');
+          $('#cond1-enabled').prop('checked', !!(s.total_adv ? (s.total_adv.enabled!==false) : true));
+          $('#total-adv-cond').val((s.total_adv && s.total_adv.cond) || 'gt');
+          $('#total-adv-threshold').val((s.total_adv && s.total_adv.threshold) || '');
+          $('#cond2-enabled').prop('checked', !!(s.color_cond ? (s.color_cond.enabled!==false) : false));
+          var vars = (s.color_cond && s.color_cond.variations) || [];
+          $("input[name='color-variations']").each(function(){ $(this).prop('checked', vars.indexOf($(this).val())>=0); });
+          $('#cond3-enabled').prop('checked', !!(s.hero_adv ? (s.hero_adv.enabled!==false) : true));
+          $('#hero-adv-cond').val((s.hero_adv && s.hero_adv.cond) || 'gt');
+          $('#hero-adv-threshold').val((s.hero_adv && s.hero_adv.threshold) || '');
+          $('#cond4-enabled').prop('checked', !!(s.watch_heroes_enabled!==false));
+          $('#watch-heroes').val((s.watch_heroes || []).join(', '));
+          // Render chips from saved heroes
+          $($('#watch-heroes-chips')).empty();
+          var saved = (s.watch_heroes || []);
+          if (window.heroes) {
+            for (var si=0; si<saved.length; si++) {
+              for (var hi=0; hi<heroes.length; hi++) {
+                if (String(heroes[hi]).toLowerCase() === String(saved[si]).toLowerCase()) { $('#watch-heroes-chips').append('<span class="chip" data-name="'+_.escape(heroes[hi])+'"><img src="'+_.escape((heroes_bg[hi] && heroes_bg[hi].indexOf("http")===0)?heroes_bg[hi]:("https://www.dotabuff.com"+heroes_bg[hi]))+'">'+_.escape(heroes[hi])+'<span class="remove" title="Remove">×</span></span>'); break; }
+              }
+            }
+          }
+          $('#watch-heroes').val('');
+        });
+      }
+
+      function gatherSettings() {
+        return {
+          email_to: $('#email-to').val().trim(),
+          email_from: $('#email-from').val().trim(),
+          condition_logic: $('#condition-logic-all').is(':checked') ? 'all' : 'any',
+          total_adv: {
+            enabled: $('#cond1-enabled').is(':checked'),
+            cond: $('#total-adv-cond').val(),
+            threshold: parseFloat($('#total-adv-threshold').val())
+          },
+          color_cond: { enabled: $('#cond2-enabled').is(':checked'), variations: $("input[name='color-variations']:checked").map(function(){return $(this).val();}).get() },
+          hero_adv: {
+            enabled: $('#cond3-enabled').is(':checked'),
+            cond: $('#hero-adv-cond').val(),
+            threshold: parseFloat($('#hero-adv-threshold').val())
+          },
+          watch_heroes_enabled: $('#cond4-enabled').is(':checked'),
+          watch_heroes: $('#watch-heroes').val().split(',').map(function (s) { return s.trim(); }).filter(Boolean)
+        };
+      }
+
+      $(function () {
+        loadSettings();
+
+        var pollTimer = null;
+        function pollStatus(){
+          api('gen_status', {}).done(function(res){
+            if (!res || !res.ok) return;
+            var st = res.status || {};
+            var pct = st.progress || 0;
+            var cur = st.current || '';
+            // Fallback: parse tail for matchups counts
+            if ((!pct || pct === 0) && res.tail) {
+              var lines = String(res.tail).split(/\n/);
+              for (var i=lines.length-1;i>=0;i--) {
+                var m = lines[i].match(/\[matchups\s+(\d+)\/(\d+)\]\s*(.+?)\s*$/);
+                if (m) { var d=parseInt(m[1],10), t=parseInt(m[2],10); if (t>0){ pct = Math.max(pct, Math.floor((d*100)/t)); cur = m[3]; } break; }
+              }
+              if (!pct && /Wrote\s+cs\.json/.test(res.tail)) { pct = 100; }
+            }
+            $('#gen-progress').css('width', pct + '%').attr('aria-valuenow', pct).text(pct + '%');
+            $('#gen-current').text(cur ? ('Current: ' + cur) : '');
+            if (pct >= 100 || st.state === 'done' || (res.tail && /Wrote\s+cs\.json/.test(res.tail))) {
+              clearInterval(pollTimer); pollTimer = null;
+              $('#gen-status').text('Done');
+              $('#gen-output').text((res.tail) || 'Generation complete.');
+            }
+          });
+        }
+
+        $('#btn-generate').click(function () {
+          var source = $('#gen-source').val();
+          $('#gen-status').text('Starting...');
+          $('#gen-log').removeClass('hide');
+          $('#gen-output').text('');
+          $('#gen-progress').css('width','0%').text('0%');
+          $('#gen-current').text('');
+          api('generate', { source: source, async: true }).done(function (res) {
+            if (res && res.ok) {
+              $('#gen-status').text('Running...');
+              if (pollTimer) { clearInterval(pollTimer); }
+              pollTimer = setInterval(pollStatus, 1500);
+              pollStatus();
+            } else {
+              $('#gen-status').text('Failed');
+              var msg = (res && (res.error || res.message)) || 'Unknown error';
+              $('#gen-output').text(msg);
+            }
+          }).fail(function (xhr) {
+            $('#gen-status').text('Failed');
+            $('#gen-output').text(xhr.responseText || 'Request failed');
+          });
+        });
+
+        $('#btn-diagnostics').click(function(){
+          $('#gen-log').removeClass('hide');
+          $('#gen-output').text('Running diagnostics...');
+          api('diagnostics', {}).done(function(res){
+            if (res && res.ok) {
+              $('#gen-output').text(JSON.stringify(res.diagnostics, null, 2));
+            } else {
+              $('#gen-output').text('Diagnostics failed');
+            }
+          }).fail(function(xhr){
+            $('#gen-output').text(xhr.responseText || 'Diagnostics request failed');
+          });
+        });
+
+        $('#notify-form').on('submit', function (e) {
+          e.preventDefault();
+          var s = gatherSettings();
+          $('#save-status').text('Saving...');
+          api('save_settings', { settings: s }).done(function (res) {
+            if (res && res.ok) { $('#save-status').text('Saved'); }
+            else { $('#save-status').text('Failed'); }
+          }).fail(function () { $('#save-status').text('Failed'); });
+        });
+
+        $('#btn-test').click(function () {
+          var s = gatherSettings();
+          api('send_test_email', { settings: s }).done(function (res) {
+            alert(res && res.ok ? 'Test email sent (if server is configured).' : ('Failed: ' + (res && res.error)));
+          }).fail(function () { alert('Request failed'); });
+        });
+
+        // Hero suggestions for Condition 4
+        var $input = $('#watch-heroes');
+        var $box = $('#watch-heroes-suggest');
+        var $chips = $('#watch-heroes-chips');
+        var selectedIdx = -1;
+        var lastQuery = '';
+        function getSelectedList(){
+          return $chips.find('.chip').map(function(){ return $(this).attr('data-name'); }).get();
+        }
+        function syncInputFromChips(){
+          var names = getSelectedList();
+          $input.val(names.join(', '));
+        }
+        function addChip(idx){
+          var name = heroes[idx];
+          var img = heroes_bg[idx] || '';
+          if (img && img.indexOf('http') !== 0) img = 'https://www.dotabuff.com' + img;
+          // avoid duplicates
+          if ($chips.find('.chip[data-name="'+_.escape(name)+'"]').length) return;
+          var html = '<span class="chip" data-name="'+_.escape(name)+'"><img src="'+_.escape(img)+'">'+_.escape(name)+'<span class="remove" title="Remove">×</span></span>';
+          $chips.append(html);
+          syncInputFromChips();
+        }
+        $chips.on('click', '.remove', function(){ $(this).closest('.chip').remove(); syncInputFromChips(); });
+        function ensureHeroesLoaded(cb){
+          if (window.heroes && window.heroes_bg) return cb();
+          // try to load cs.json dynamically
+          var s = document.createElement('script');
+          s.src = 'cs.json?v=' + Date.now();
+          s.onload = function(){ setTimeout(cb, 50); };
+          document.head.appendChild(s);
+        }
+        function renderSuggestions(q){
+          if (!window.heroes || !window.heroes_bg) { $box.hide(); return; }
+          q = (q||'').trim().toLowerCase();
+          if (!q) { $box.hide().empty(); selectedIdx=-1; return; }
+          var items = [];
+          for (var i=0;i<heroes.length;i++){
+            var name = String(heroes[i]||'');
+            if (!name) continue;
+            if (name.toLowerCase().indexOf(q) === -1) continue;
+            var img = heroes_bg[i] || '';
+            if (img && img.indexOf('http') !== 0) img = 'https://www.dotabuff.com' + img;
+            items.push({i:i,name:name,img:img});
+            if (items.length>=12) break;
+          }
+          if (!items.length) { $box.hide().empty(); selectedIdx=-1; return; }
+          if (selectedIdx < 0 || selectedIdx >= items.length) selectedIdx = 0;
+          var html='';
+          for (var k=0;k<items.length;k++){
+            var it=items[k];
+            html += '<div class="suggest-item'+(k===selectedIdx?' active':'')+'" data-idx="'+it.i+'" style="display:inline-block; margin:4px; padding:4px 6px; background:#232833; cursor:pointer;">'
+                 + '<img src="'+_.escape(it.img)+'" style="height:28px; width:auto; vertical-align:middle; margin-right:6px; border:1px solid #2a3140;">'
+                 + _.escape(it.name) + '</div>';
+          }
+          $box.html(html).show();
+        }
+        $input.on('input focus', function(){ ensureHeroesLoaded(function(){ lastQuery = $input.val(); renderSuggestions(lastQuery); }); });
+        $input.on('blur', function(){ setTimeout(function(){ $box.hide(); }, 150); });
+        $box.on('click','.suggest-item', function(){
+          var idx = parseInt($(this).attr('data-idx'),10);
+          if (isNaN(idx)) return;
+          addChip(idx);
+          // keep suggestions open for rapid selection; clear input text
+          $input.val('');
+          renderSuggestions(lastQuery);
+        });
+        $input.on('keydown', function(e){
+          if (!$box.is(':visible')) return;
+          var $items = $box.find('.suggest-item');
+          if (!$items.length) return;
+          if (e.keyCode === 40) { // down
+            e.preventDefault(); selectedIdx = (selectedIdx+1) % $items.length; renderSuggestions($input.val()); return;
+          }
+          if (e.keyCode === 38) { // up
+            e.preventDefault(); selectedIdx = (selectedIdx<=0 ? $items.length-1 : selectedIdx-1); renderSuggestions($input.val()); return;
+          }
+          if (e.keyCode === 13) { // enter: add current and move to next
+            e.preventDefault();
+            var $pick = $box.find('.suggest-item').eq(selectedIdx>=0?selectedIdx:0);
+            if ($pick.length) {
+              var idx = parseInt($pick.attr('data-idx'),10);
+              addChip(idx);
+              // advance selection to next
+              selectedIdx = Math.min((selectedIdx>=0?selectedIdx:0)+1, $items.length-1);
+              $input.val('');
+              renderSuggestions(lastQuery || $pick.text());
+            }
+          }
+        });
+        // Gather settings from chips
+        var originalGather = gatherSettings;
+        gatherSettings = function(){
+          var s = originalGather();
+          s.watch_heroes = getSelectedList();
+          s.watch_heroes_enabled = $('#cond4-enabled').is(':checked');
+          return s;
+        };
+      });
+    </script>
+  </body>
+</html>
+
