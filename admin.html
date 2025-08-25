@@ -71,20 +71,28 @@
         </div>
       </div>
 
-      <div class="row section">
-        <div class="col-md-12">
-          <div class="well">
-            <h4>Email notifications</h4>
-            <div class="form-group">
-              <label>Notify when</label>
-              <div class="radio">
-                <label><input type="radio" name="cond-logic" id="condition-logic-all" checked> All selected conditions are met</label>
-              </div>
-              <div class="radio">
-                <label><input type="radio" name="cond-logic" id="condition-logic-any"> Any selected condition is met</label>
-              </div>
-            </div>
-            <form id="notify-form" class="form">
+                    <div class="row section">
+                <div class="col-md-12">
+                  <div class="well">
+                    <h4>Email notifications</h4>
+                    <div class="form-group">
+                      <label>Recipient email</label>
+                      <input id="email-to" type="email" class="form-control" placeholder="you@example.com">
+                    </div>
+                    <div class="form-group">
+                      <label>From email (optional)</label>
+                      <input id="email-from" type="email" class="form-control" placeholder="sender@example.com">
+                    </div>
+                    <div class="form-group">
+                      <label>Notify when</label>
+                      <div class="radio">
+                        <label><input type="radio" name="cond-logic" id="condition-logic-all" checked> All selected conditions are met</label>
+                      </div>
+                      <div class="radio">
+                        <label><input type="radio" name="cond-logic" id="condition-logic-any"> Any selected condition is met</label>
+                      </div>
+                    </div>
+                    <form id="notify-form" class="form">
               <div class="row">
                 <div class="col-sm-6">
                   <div class="form-group">
