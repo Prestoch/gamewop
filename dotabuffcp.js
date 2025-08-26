@@ -572,12 +572,25 @@ var AppRouter = Backbone.Router.extend ({
 });
 
 
+// Ensure cs.json is loaded before booting the app (fallback if script tag failed or cached)
+function ensureHeroesLoaded(cb){
+  if (window.heroes && window.heroes_bg && window.win_rates) return cb();
+  var s = document.createElement('script');
+  s.src = 'cs.json?v=' + Date.now();
+  s.onload = function(){ setTimeout(cb, 50); };
+  document.head.appendChild(s);
+}
+
 $(document).ready (function () {
-  // set version
-  $('#version').text (DotaBuffCP.getVersion ());
-
-  var appRouter = new AppRouter ();
-
-  Backbone.history.start ({ pushState: false, root: '/dotabuffcp/' });
+  var boot = function(){
+    try { $('#version').text (DotaBuffCP.getVersion ()); } catch (e) {}
+    var appRouter = new AppRouter ();
+    if (!DotaBuffCP.initialized && window.heroes && window.heroes.length) {
+      DotaBuffCP.initialize();
+      new MainView ();
+    }
+    Backbone.history.start ({ pushState: false, root: '/' });
+  };
+  ensureHeroesLoaded(boot);
 });
 
