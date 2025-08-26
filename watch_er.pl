@@ -18,6 +18,7 @@ my $POLL_SECS = defined $ENV{WATCH_POLL_SECS} ? 0.0 + $ENV{WATCH_POLL_SECS} : 30
 my $SCRAPEDO_API_KEY = $ENV{SCRAPEDO_API_KEY} // '';
 my $SCRAPEDO_ENDPOINT = $ENV{SCRAPEDO_ENDPOINT} // 'https://api.scrape.do';
 my $SCRAPEDO_RENDER = $ENV{SCRAPEDO_RENDER} // '';
+my $CS_API_URL = $ENV{CYBERSCORE_API_URL} // 'https://api.cyberscore.live/api/v1/matches/?limit=20&liveOrUpcoming=1';
 
 my $http = HTTP::Tiny->new(
   agent => 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36 Perl-HTTP::Tiny',
@@ -41,12 +42,21 @@ sub fetch_with_scrapedo {
   return http_get_text($api_url);
 }
 
-sub fetch_url {
+sub http_get_json {
   my ($url) = @_;
-  my $html = '';
-  $html = fetch_with_scrapedo($url) if $SCRAPEDO_API_KEY;
-  $html = http_get_text($url) unless $html;
-  return $html // '';
+  my $res = $http->get($url, { headers => { 'Accept' => 'application/json' } });
+  return undef unless $res->{success} && $res->{content};
+  my $data = eval { decode_json($res->{content}) };
+  return $@ ? undef : $data;
+}
+
+sub scrapedo_get_json {
+  my ($url) = @_;
+  return undef unless $SCRAPEDO_API_KEY;
+  my $raw = fetch_with_scrapedo($url);
+  return undef unless defined $raw && length $raw;
+  my $data = eval { decode_json($raw) };
+  return $@ ? undef : $data;
 }
 
 # ----- Load settings -----
@@ -164,36 +174,27 @@ sub any_hero_adv_threshold {
   return $hit ? 1 : 0;
 }
 
-sub parse_match_urls_from_home {
-  my ($html) = @_;
-  my %seen; my @urls;
-  while ($html =~ m{href\s*=\s*"(\/[^"\s]*match[^"\s]*)"}ig) {
-    my $p = $1; next if $seen{$p}++;
-    my $abs = ($p =~ /^https?:/) ? $p : ('https://cyberscore.live' . $p);
-    push @urls, $abs;
+sub extract_picks_from_api_match {
+  my ($m) = @_;
+  my (@a,@b);
+  if (ref $m eq 'HASH') {
+    for my $key (qw/draft picks events/) {
+      next unless ref $m->{$key} eq 'ARRAY';
+      for my $e (@{ $m->{$key} }) {
+        next unless ref $e eq 'HASH';
+        my $side = lc(($e->{side}//$e->{team}//$e->{faction}//'')."");
+        $side = 'radiant' if $side =~ /^(radiant|r|0)$/;
+        $side = 'dire' if $side =~ /^(dire|d|1)$/;
+        my $hname = $e->{hero}//$e->{hero_name}//$e->{heroName}//$e->{name}//'';
+        $hname = $hname->{name} if ref $hname eq 'HASH' && $hname->{name};
+        next unless $hname && !ref $hname;
+        my $idx = hero_index_by_name($hname);
+        next unless $idx >= 0;
+        if ($side eq 'radiant') { push @a, $idx; } elsif ($side eq 'dire') { push @b, $idx; }
+      }
+    }
   }
-  return \@urls;
-}
-
-sub parse_picks_from_match_html {
-  my ($html) = @_;
-  # Heuristic: collect hero names from img alt/title
-  my @names;
-  while ($html =~ m{<(?:img|span|div)[^>]+(?:alt|title)\s*=\s*"([^"]+?)"[^>]*>}ig) {
-    push @names, $1;
-  }
-  # Map to hero ids
-  my @ids;
-  for my $n (@names) {
-    my $idx = hero_index_by_name($n);
-    push @ids, $idx if $idx >= 0;
-  }
-  # Try to split into two teams of 5 by first 10 unique ids order
-  my @uniq; my %seen;
-  for my $id (@ids) { next if $seen{$id}++; push @uniq, $id; last if @uniq >= 10; }
-  return ([],[]) unless @uniq >= 2;
-  my @a = @uniq[0 .. (($#uniq >= 4)?4:$#uniq)];
-  my @b = @uniq[(($#uniq >= 5)?5:scalar(@uniq)) .. (($#uniq >= 9)?9:$#uniq)];
+  @a = @a[0..4] if @a > 5; @b = @b[0..4] if @b > 5;
   return (\@a, \@b);
 }
 
@@ -241,18 +242,16 @@ sub main_loop {
   my %notified;
 
   while (1) {
-    my $home = fetch_url('https://cyberscore.live/en/');
-    if (!$home) { warn "Failed to fetch cyberscore home\n"; sleep($POLL_SECS); next; }
-    my $urls = parse_match_urls_from_home($home);
+    my $list = http_get_json($CS_API_URL);
+    $list ||= scrapedo_get_json($CS_API_URL);
     my $checked = 0; my $found = 0;
-    URL: for my $u (@$urls) {
-      next unless $u && $u =~ /match/i;
+    if (ref $list eq 'HASH' && ref $list->{results} eq 'ARRAY') { $list = $list->{results}; }
+    $list = [] unless ref $list eq 'ARRAY';
+    for my $m (@$list) {
       $checked++;
-      my $html = fetch_url($u);
-      next unless $html && $html =~ /(?i)pick|draft|ban|hero/;
-      my ($a,$b) = parse_picks_from_match_html($html);
-      next unless $a && $b;
-      next unless scalar(@$a) >= 2 && scalar(@$b) >= 2; # at least some picks
+      my ($a,$b) = extract_picks_from_api_match($m);
+      next unless $a && $b && (scalar(@$a)+scalar(@$b)) >= 2;
+      my $url = $m->{url} || $m->{webUrl} || '';
       my $key = join(',',@$a) . '|' . join(',',@$b);
       next if $notified{$key}++;
       $found++;
@@ -290,7 +289,7 @@ sub main_loop {
         my $namesA = join(', ', map { $HEROES[$_] } @$a);
         my $namesB = join(', ', map { $HEROES[$_] } @$b);
         my $body = '';
-        $body .= "Match: $u\n";
+        $body .= "Match: $url\n" if $url;
         $body .= sprintf("Diff (A-B): %.4f\n\n", $diff);
         $body .= "Team A: $namesA\n";
         $body .= "Team B: $namesB\n";
@@ -298,7 +297,7 @@ sub main_loop {
         if ($ok) { $st->{alerts} = ($st->{alerts}||0) + 1; $st->{last_alert_at} = time; save_status($st); print STDOUT "ALERT sent for $u (diff=$diff)\n"; }
         else { print STDOUT "ALERT FAILED for $u (diff=$diff)\n"; }
       } else {
-        print STDOUT sprintf("No alert: diff=%.2f url=%s\n", $diff, $u);
+        print STDOUT sprintf("No alert (API): diff=%.2f\n", $diff);
       }
     }
     $st->{last_poll} = time; $st->{last_checked} = $checked; $st->{last_found} = $found; save_status($st);
