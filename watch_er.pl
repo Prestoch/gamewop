@@ -8,7 +8,6 @@ use POSIX qw(strftime);
 use Cwd qw(abs_path getcwd);
 use File::Basename qw(dirname);
 use File::Spec;
-our $HAS_ZLIB; BEGIN { $HAS_ZLIB = eval { require Compress::Raw::Zlib; Compress::Raw::Zlib->import(); 1 } ? 1 : 0; }
 
 # ----- Paths and helpers -----
 my $BASE_DIR = dirname(abs_path($0));
@@ -19,8 +18,6 @@ my $POLL_SECS = defined $ENV{WATCH_POLL_SECS} ? 0.0 + $ENV{WATCH_POLL_SECS} : 30
 my $SCRAPEDO_API_KEY = $ENV{SCRAPEDO_API_KEY} // '';
 my $SCRAPEDO_ENDPOINT = $ENV{SCRAPEDO_ENDPOINT} // 'https://api.scrape.do';
 my $SCRAPEDO_RENDER = $ENV{SCRAPEDO_RENDER} // '';
-my $DEBUG = $ENV{WATCH_DEBUG} ? 1 : 0;
-my $SCRAPEDO_HEADERS = $ENV{SCRAPEDO_HEADERS} // '{"Accept":"application/json","Accept-Encoding":"identity"}';
 
 my $http = HTTP::Tiny->new(
   agent => 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36 Perl-HTTP::Tiny',
@@ -31,7 +28,7 @@ sub url_encode { my ($s)=@_; $s//= ''; $s =~ s/([^A-Za-z0-9\-_.~])/sprintf("%%%0
 
 sub http_get_text {
   my ($url) = @_;
-  my $res = $http->get($url, { headers => { 'Accept-Encoding' => 'identity', 'User-Agent' => ($http->{agent}||'curl') } });
+  my $res = $http->get($url);
   return $res->{success} ? ($res->{content} || '') : '';
 }
 
@@ -40,62 +37,8 @@ sub fetch_with_scrapedo {
   return '' unless $SCRAPEDO_API_KEY;
   my $qs = 'token=' . url_encode($SCRAPEDO_API_KEY) . '&url=' . url_encode($url);
   $qs .= '&render=true' if $SCRAPEDO_RENDER && $SCRAPEDO_RENDER =~ /^(1|true|yes)$/i;
-  $qs .= '&headers=' . url_encode($SCRAPEDO_HEADERS) if $SCRAPEDO_HEADERS;
   my $api_url = $SCRAPEDO_ENDPOINT . '?' . $qs;
   return http_get_text($api_url);
-}
-
-sub maybe_decompress {
-  my ($raw) = @_;
-  return $raw unless $HAS_ZLIB && defined $raw && length $raw;
-  my ($infl, $status) = (undef, undef);
-  $infl = Compress::Raw::Zlib::Inflate->new(-WindowBits => 47);
-  my $out = '';
-  $status = $infl->inflate($raw, $out);
-  if (defined $status && ($status == Compress::Raw::Zlib::Z_OK() || $status == Compress::Raw::Zlib::Z_STREAM_END())) {
-    return $out if length($out);
-  }
-  return $raw;
-}
-
-# Add JSON helpers (prefer API)
-my $CS_API_URL = $ENV{CYBERSCORE_API_URL} // 'https://api.cyberscore.live/api/v1/matches/?limit=20&liveOrUpcoming=1';
-
-sub http_get_json {
-  my ($url) = @_;
-  my $res = $http->get($url, { headers => { 'Accept' => 'application/json', 'User-Agent' => ($http->{agent}||'curl') } });
-  if ($res->{success} && defined $res->{content} && length $res->{content}) {
-    my $body = $res->{content};
-    my $j = eval { decode_json($body) };
-    if ($@) {
-      $body = maybe_decompress($body);
-      $j = eval { decode_json($body) };
-    }
-    if ($@ && $DEBUG) {
-      my $len = length($res->{content}||'');
-      print STDOUT "DEBUG api direct decode failed len=$len: $@\n";
-    }
-    return $j if !$@ && defined $j;
-  }
-  elsif ($DEBUG) {
-    print STDOUT "DEBUG api direct fetch failed status=".($res->{status}||0)."\n";
-  }
-  return undef;
-}
-
-sub scrapedo_get_json {
-  my ($url) = @_;
-  return undef unless $SCRAPEDO_API_KEY;
-  my $raw = fetch_with_scrapedo($url);
-  return undef unless defined $raw && length $raw;
-  my $body = $raw;
-  my $j = eval { decode_json($body) };
-  if ($@) { $body = maybe_decompress($body); $j = eval { decode_json($body) }; }
-  if ($@ && $DEBUG) {
-    my $len = length($raw||'');
-    print STDOUT "DEBUG api scrapedo decode failed len=$len: $@\n";
-  }
-  return $@ ? undef : $j;
 }
 
 sub fetch_url {
@@ -103,37 +46,7 @@ sub fetch_url {
   my $html = '';
   $html = fetch_with_scrapedo($url) if $SCRAPEDO_API_KEY;
   $html = http_get_text($url) unless $html;
-  $html = maybe_decompress($html) if $html;
   return $html // '';
-}
-
-# ----- Robust JSON array extractor for cs.json assignments -----
-sub extract_json_array {
-  my ($src, $needle) = @_;
-  my $start = index($src, $needle);
-  return '' if $start < 0;
-  my $i = index($src, '[', $start);
-  return '' if $i < 0;
-  my $depth = 0;
-  my $in_str = 0;
-  my $esc = 0;
-  my $end = -1;
-  my $len = length($src);
-  for (my $p = $i; $p < $len; $p++) {
-    my $ch = substr($src, $p, 1);
-    if ($in_str) {
-      if ($esc) { $esc = 0; next; }
-      if ($ch eq '\\') { $esc = 1; next; }
-      if ($ch eq '"') { $in_str = 0; next; }
-      next;
-    } else {
-      if ($ch eq '"') { $in_str = 1; next; }
-      if ($ch eq '[') { $depth++; next; }
-      if ($ch eq ']') { $depth--; if ($depth == 0) { $end = $p; last; } next; }
-    }
-  }
-  return '' if $end < 0;
-  return substr($src, $i, $end - $i + 1);
 }
 
 # ----- Load settings -----
@@ -149,27 +62,16 @@ sub load_cs {
   my $path = local_file('cs.json');
   open my $fh, '<', $path or die "Missing cs.json - generate it first";
   local $/; my $txt = <$fh>; close $fh;
-  my $h   = extract_json_array($txt, 'var heroes');
-  my $wr  = extract_json_array($txt, 'heroes_wr');
-  my $mat = extract_json_array($txt, 'win_rates');
+  my ($h)  = $txt =~ /\bvar\s+heroes\s*=\s*(\[[\s\S]*?\])/s;
+  my ($wr) = $txt =~ /\bheroes_wr\s*=\s*(\[[\s\S]*?\])/s;
+  my ($mat)= $txt =~ /\bwin_rates\s*=\s*(\[[\s\S]*?\])/s;
   die "cs.json parse error: heroes" unless $h;
   die "cs.json parse error: heroes_wr" unless $wr;
   die "cs.json parse error: win_rates" unless $mat;
   my $j = JSON::PP->new;
-  my $heroes_ref   = eval { $j->decode($h) };
-  if ($@ || ref $heroes_ref ne 'ARRAY') { die "cs.json decode heroes failed: $@"; }
-  my $wr_ref       = eval { $j->decode($wr) };
-  if ($@ || ref $wr_ref ne 'ARRAY') { die "cs.json decode heroes_wr failed: $@"; }
-  my $mat_ref      = eval { $j->decode($mat) };
-  if ($@ || ref $mat_ref ne 'ARRAY') {
-    print STDOUT "cs.json debug heroes prefix: ".substr($h,0,80)."...\n";
-    print STDOUT "cs.json debug wr prefix: ".substr($wr,0,80)."...\n";
-    print STDOUT "cs.json debug win_rates prefix: ".substr($mat,0,80)."...\n";
-    die "cs.json decode win_rates failed: $@";
-  }
-  @HEROES    = @{ $heroes_ref };
-  @HEROES_WR = @{ $wr_ref };
-  @WIN_RATES = @{ $mat_ref };
+  @HEROES     = @{ $j->decode($h) };
+  @HEROES_WR  = @{ $j->decode($wr) };
+  @WIN_RATES  = @{ $j->decode($mat) };
 }
 
 sub normalize_name {
@@ -262,82 +164,6 @@ sub any_hero_adv_threshold {
   return $hit ? 1 : 0;
 }
 
-# API parsing: attempt to extract picks from CyberScore API JSON
-sub extract_picks_from_api_match {
-  my ($m) = @_;
-  my (@a,@b);
-  my $push_pick = sub {
-    my ($side, $hname) = @_;
-    return unless defined $hname && length $hname;
-    my $idx = hero_index_by_name($hname);
-    return unless $idx >= 0;
-    if ($side =~ /^(?:radiant|r|0)$/i) { push @a, $idx; }
-    elsif ($side =~ /^(?:dire|d|1)$/i) { push @b, $idx; }
-  };
-
-  # Common shapes: m.draft[], m.picks[], m.events[]
-  if (ref $m eq 'HASH') {
-    for my $key (qw/draft picks events/) {
-      if (ref $m->{$key} eq 'ARRAY') {
-        for my $e (@{ $m->{$key} }) {
-          next unless ref $e eq 'HASH';
-          # side/team
-          my $side = defined $e->{side} ? $e->{side} : (defined $e->{team} ? $e->{team} : (defined $e->{faction} ? $e->{faction} : ''));
-          # normalize side
-          if (defined $side && !ref $side) {
-            $side = lc($side);
-            $side = 'radiant' if $side =~ /^(?:radiant|r|0)$/;
-            $side = 'dire'    if $side =~ /^(?:dire|d|1)$/;
-          } else { $side = ''; }
-          # hero name fields
-          my $hname = $e->{hero} // $e->{hero_name} // $e->{heroName} // $e->{name} // '';
-          $hname = $hname->{name} if ref $hname eq 'HASH' && defined $hname->{name};
-          $hname = '' if ref $hname;
-          if ($hname) { $push_pick->($side||'', $hname); next; }
-        }
-      }
-    }
-    # sometimes under m.teams[].picks[]
-    if (ref $m->{teams} eq 'ARRAY') {
-      for my $t (@{ $m->{teams} }) {
-        next unless ref $t eq 'HASH';
-        my $side = lc($t->{side} // $t->{team} // '');
-        $side = 'radiant' if $side =~ /^(?:radiant|r|0)$/;
-        $side = 'dire'    if $side =~ /^(?:dire|d|1)$/;
-        if (ref $t->{picks} eq 'ARRAY') {
-          for my $p (@{ $t->{picks} }) {
-            next unless ref $p;
-            my $hn = $p->{hero} // $p->{name} // $p->{hero_name} // '';
-            $hn = $hn->{name} if ref $hn eq 'HASH' && defined $hn->{name};
-            $hn = '' if ref $hn;
-            $push_pick->($side||'', $hn) if $hn;
-          }
-        }
-      }
-    }
-  }
-
-  # limit to first 5 per team
-  @a = @a[0..4] if @a > 5; @b = @b[0..4] if @b > 5;
-  return (\@a, \@b);
-}
-
-sub poll_api_for_picks {
-  my $j = http_get_json($CS_API_URL);
-  $j ||= scrapedo_get_json($CS_API_URL);
-  return [] unless $j;
-  my @matches;
-  my $list = (ref $j eq 'HASH' && ref $j->{results} eq 'ARRAY') ? $j->{results} : (ref $j eq 'ARRAY' ? $j : []);
-  for my $m (@$list) {
-    next unless ref $m eq 'HASH';
-    my ($a,$b) = extract_picks_from_api_match($m);
-    next unless $a && $b && (scalar(@$a)+scalar(@$b)) >= 2;
-    my $url = $m->{url} || $m->{webUrl} || $m->{matchUrl} || '';
-    push @matches, { a => $a, b => $b, url => $url };
-  }
-  return \@matches;
-}
-
 sub parse_match_urls_from_home {
   my ($html) = @_;
   my %seen; my @urls;
@@ -415,49 +241,10 @@ sub main_loop {
   my %notified;
 
   while (1) {
-    # First try API
-    my $api_matches = poll_api_for_picks();
-    my $checked = 0; my $found = 0;
-    if ($api_matches && ref $api_matches eq 'ARRAY' && @$api_matches) {
-      print STDOUT "DEBUG api matches: ".scalar(@$api_matches)."\n" if $DEBUG;
-      for my $mm (@$api_matches) {
-        $checked++;
-        my ($a,$b) = ($mm->{a}, $mm->{b});
-        my $u = $mm->{url} || '';
-        my $key = join(',',@$a) . '|' . join(',',@$b);
-        next if $notified{$key}++;
-        $found++;
-        my $scoreA = team_score($a,$b);
-        my $scoreB = team_score($b,$a);
-        my $diff = $scoreA - $scoreB;
-        my @conds;
-        if ($ta_enabled && (defined $ta_min || defined $ta_max)) { my $ok=0; $ok ||= (defined $ta_min && $diff >= $ta_min); $ok ||= (defined $ta_max && $diff <= $ta_max); push @conds, $ok?1:0; }
-        if ($ha_enabled && defined $ha_thr) { my $ok = any_hero_adv_threshold($b, $ha_cond, $ha_thr); push @conds, $ok?1:0; }
-        if ($watch_heroes_enabled && scalar keys %watch_set) { my $ok=0; for my $hid (@$a, @$b) { next unless $hid>=0; my $nm = normalize_name($HEROES[$hid]||''); if ($watch_set{$nm}) { $ok=1; last; } } push @conds, $ok?1:0; }
-        my $should_alert = (!@conds) ? 0 : (($cond_logic eq 'all') ? ((grep { !$_ } @conds)?0:1) : ((grep { $_ } @conds)?1:0));
-        if ($should_alert) {
-          my $to = $settings->{email_to}||''; my $from = $settings->{email_from}||'';
-          my $subject = sprintf('[Dota Watcher] Picks alert (diff=%.2f)', $diff);
-          my $namesA = join(', ', map { $HEROES[$_] } @$a);
-          my $namesB = join(', ', map { $HEROES[$_] } @$b);
-          my $body = '';
-          $body .= "Match: $u\n" if $u;
-          $body .= sprintf("Diff (A-B): %.4f\n\n", $diff);
-          $body .= "Team A: $namesA\n";
-          $body .= "Team B: $namesB\n";
-          my $ok = send_email_via_sendmail(to=>$to, from=>$from, subject=>$subject, body=>$body);
-          if ($ok) { $st->{alerts} = ($st->{alerts}||0) + 1; $st->{last_alert_at} = time; save_status($st); print STDOUT "ALERT sent (API) diff=$diff\n"; }
-          else { print STDOUT "ALERT FAILED (API) diff=$diff\n"; }
-        } else { print STDOUT sprintf("No alert (API): diff=%.2f\n", $diff); }
-      }
-      $st->{last_poll} = time; $st->{last_checked} = $checked; $st->{last_found} = $found; save_status($st);
-      sleep($POLL_SECS); next;
-    }
-
-    # Fallback: HTML scrape
     my $home = fetch_url('https://cyberscore.live/en/');
     if (!$home) { warn "Failed to fetch cyberscore home\n"; sleep($POLL_SECS); next; }
     my $urls = parse_match_urls_from_home($home);
+    my $checked = 0; my $found = 0;
     URL: for my $u (@$urls) {
       next unless $u && $u =~ /match/i;
       $checked++;
