@@ -8,6 +8,7 @@ use POSIX qw(strftime);
 use Cwd qw(abs_path getcwd);
 use File::Basename qw(dirname);
 use File::Spec;
+use Compress::Raw::Zlib;
 
 # ----- Paths and helpers -----
 my $BASE_DIR = dirname(abs_path($0));
@@ -41,6 +42,19 @@ sub fetch_with_scrapedo {
   return http_get_text($api_url);
 }
 
+sub maybe_decompress {
+  my ($raw) = @_;
+  return $raw unless $HAS_ZLIB && defined $raw && length $raw;
+  my ($infl, $status) = (undef, undef);
+  $infl = Compress::Raw::Zlib::Inflate->new(-WindowBits => 47);
+  my $out = '';
+  $status = $infl->inflate($raw, $out);
+  if (defined $status && ($status == Compress::Raw::Zlib::Z_OK() || $status == Compress::Raw::Zlib::Z_STREAM_END())) {
+    return $out if length($out);
+  }
+  return $raw;
+}
+
 # Add JSON helpers (prefer API)
 my $CS_API_URL = $ENV{CYBERSCORE_API_URL} // 'https://api.cyberscore.live/api/v1/matches/?limit=20&liveOrUpcoming=1';
 
@@ -48,7 +62,12 @@ sub http_get_json {
   my ($url) = @_;
   my $res = $http->get($url, { headers => { 'Accept' => 'application/json', 'User-Agent' => ($http->{agent}||'curl') } });
   if ($res->{success} && defined $res->{content} && length $res->{content}) {
-    my $j = eval { decode_json($res->{content}) };
+    my $body = $res->{content};
+    my $j = eval { decode_json($body) };
+    if ($@) {
+      $body = maybe_decompress($body);
+      $j = eval { decode_json($body) };
+    }
     return $j if !$@ && defined $j;
   }
   return undef;
@@ -59,7 +78,9 @@ sub scrapedo_get_json {
   return undef unless $SCRAPEDO_API_KEY;
   my $raw = fetch_with_scrapedo($url);
   return undef unless defined $raw && length $raw;
-  my $j = eval { decode_json($raw) };
+  my $body = $raw;
+  my $j = eval { decode_json($body) };
+  if ($@) { $body = maybe_decompress($body); $j = eval { decode_json($body) }; }
   return $@ ? undef : $j;
 }
 
@@ -68,6 +89,7 @@ sub fetch_url {
   my $html = '';
   $html = fetch_with_scrapedo($url) if $SCRAPEDO_API_KEY;
   $html = http_get_text($url) unless $html;
+  $html = maybe_decompress($html) if $html;
   return $html // '';
 }
 
