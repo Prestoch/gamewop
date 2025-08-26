@@ -8,7 +8,7 @@ use POSIX qw(strftime);
 use Cwd qw(abs_path getcwd);
 use File::Basename qw(dirname);
 use File::Spec;
-use Compress::Raw::Zlib;
+our $HAS_ZLIB; BEGIN { $HAS_ZLIB = eval { require Compress::Raw::Zlib; Compress::Raw::Zlib->import(); 1 } ? 1 : 0; }
 
 # ----- Paths and helpers -----
 my $BASE_DIR = dirname(abs_path($0));
