@@ -19,6 +19,7 @@ my $POLL_SECS = defined $ENV{WATCH_POLL_SECS} ? 0.0 + $ENV{WATCH_POLL_SECS} : 30
 my $SCRAPEDO_API_KEY = $ENV{SCRAPEDO_API_KEY} // '';
 my $SCRAPEDO_ENDPOINT = $ENV{SCRAPEDO_ENDPOINT} // 'https://api.scrape.do';
 my $SCRAPEDO_RENDER = $ENV{SCRAPEDO_RENDER} // '';
+my $DEBUG = $ENV{WATCH_DEBUG} ? 1 : 0;
 
 my $http = HTTP::Tiny->new(
   agent => 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36 Perl-HTTP::Tiny',
@@ -68,7 +69,14 @@ sub http_get_json {
       $body = maybe_decompress($body);
       $j = eval { decode_json($body) };
     }
+    if ($@ && $DEBUG) {
+      my $len = length($res->{content}||'');
+      print STDOUT "DEBUG api direct decode failed len=$len: $@\n";
+    }
     return $j if !$@ && defined $j;
+  }
+  elsif ($DEBUG) {
+    print STDOUT "DEBUG api direct fetch failed status=".($res->{status}||0)."\n";
   }
   return undef;
 }
@@ -81,6 +89,10 @@ sub scrapedo_get_json {
   my $body = $raw;
   my $j = eval { decode_json($body) };
   if ($@) { $body = maybe_decompress($body); $j = eval { decode_json($body) }; }
+  if ($@ && $DEBUG) {
+    my $len = length($raw||'');
+    print STDOUT "DEBUG api scrapedo decode failed len=$len: $@\n";
+  }
   return $@ ? undef : $j;
 }
 
@@ -405,6 +417,7 @@ sub main_loop {
     my $api_matches = poll_api_for_picks();
     my $checked = 0; my $found = 0;
     if ($api_matches && ref $api_matches eq 'ARRAY' && @$api_matches) {
+      print STDOUT "DEBUG api matches: ".scalar(@$api_matches)."\n" if $DEBUG;
       for my $mm (@$api_matches) {
         $checked++;
         my ($a,$b) = ($mm->{a}, $mm->{b});
