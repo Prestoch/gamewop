@@ -582,15 +582,12 @@ function ensureHeroesLoaded(cb){
 }
 
 $(document).ready (function () {
-  var boot = function(){
+  ensureHeroesLoaded(function(){
     try { $('#version').text (DotaBuffCP.getVersion ()); } catch (e) {}
-    var appRouter = new AppRouter ();
-    if (!DotaBuffCP.initialized && window.heroes && window.heroes.length) {
+    if (!DotaBuffCP.initialized) {
       DotaBuffCP.initialize();
-      new MainView ();
     }
-    Backbone.history.start ({ pushState: false, root: '/' });
-  };
-  ensureHeroesLoaded(boot);
+    new MainView ();
+  });
 });
 
