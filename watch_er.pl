@@ -71,6 +71,35 @@ sub fetch_url {
   return $html // '';
 }
 
+# ----- Robust JSON array extractor for cs.json assignments -----
+sub extract_json_array {
+  my ($src, $needle) = @_;
+  my $start = index($src, $needle);
+  return '' if $start < 0;
+  my $i = index($src, '[', $start);
+  return '' if $i < 0;
+  my $depth = 0;
+  my $in_str = 0;
+  my $esc = 0;
+  my $end = -1;
+  my $len = length($src);
+  for (my $p = $i; $p < $len; $p++) {
+    my $ch = substr($src, $p, 1);
+    if ($in_str) {
+      if ($esc) { $esc = 0; next; }
+      if ($ch eq '\\') { $esc = 1; next; }
+      if ($ch eq '"') { $in_str = 0; next; }
+      next;
+    } else {
+      if ($ch eq '"') { $in_str = 1; next; }
+      if ($ch eq '[') { $depth++; next; }
+      if ($ch eq ']') { $depth--; if ($depth == 0) { $end = $p; last; } next; }
+    }
+  }
+  return '' if $end < 0;
+  return substr($src, $i, $end - $i + 1);
+}
+
 # ----- Load settings -----
 sub load_settings {
   my $path = local_file('settings.json');
@@ -84,9 +113,9 @@ sub load_cs {
   my $path = local_file('cs.json');
   open my $fh, '<', $path or die "Missing cs.json - generate it first";
   local $/; my $txt = <$fh>; close $fh;
-  my ($h)  = $txt =~ /\bvar\s+heroes\s*=\s*(\[[\s\S]*?\])/s;
-  my ($wr) = $txt =~ /\bheroes_wr\s*=\s*(\[[\s\S]*?\])/s;
-  my ($mat)= $txt =~ /\bwin_rates\s*=\s*(\[[\s\S]*?\])/s;
+  my $h   = extract_json_array($txt, 'var heroes');
+  my $wr  = extract_json_array($txt, 'heroes_wr');
+  my $mat = extract_json_array($txt, 'win_rates');
   die "cs.json parse error: heroes" unless $h;
   die "cs.json parse error: heroes_wr" unless $wr;
   die "cs.json parse error: win_rates" unless $mat;
