@@ -170,15 +170,18 @@ sub fetch_matchups {
 
 sub write_cs_json {
   my $j = JSON::PP->new;
+  my $content = '';
+  $content .= 'var heroes = '    . $j->encode([ @heroes ]);
+  $content .= ', heroes_bg = '   . $j->encode([ @heroes_bg ]);
+  $content .= ', heroes_wr = '   . $j->encode([ @heroes_wr ]);
+  $content .= ', win_rates = '   . $j->encode([ @win_rates ]);
+  $content .= ', update_time = "' . strftime("%Y-%m-%d", localtime) . '";\n';
+
   open my $fh, '>cs.json' or die $!;
-  print $fh 'var heroes = ',    $j->encode([ @heroes ]);
-  print $fh ', heroes_bg = ',   $j->encode([ @heroes_bg ]);
-  print $fh ', heroes_wr = ',   $j->encode([ @heroes_wr ]);
-  print $fh ', win_rates = ',   $j->encode([ @win_rates ]);
-  print $fh ', update_time = "', strftime("%Y-%m-%d", localtime), '";';
-  print $fh "\n";
-  close $fh;
-  warn "Wrote cs.json\n";
+  print $fh $content; close $fh;
+  # Also write a JS extension variant for hosts that block .json
+  if (open my $fh2, '>cs.js') { print $fh2 $content; close $fh2; }
+  warn "Wrote cs.json and cs.js\n";
 }
 
 fetch_heroes();

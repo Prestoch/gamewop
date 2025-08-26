@@ -405,19 +405,17 @@ sub print_winrates {
 
   warn "Writing win rates to cs.json\n";
 
-  open my $fh, '>cs.json';
+  my $content = '';
+  $content .= 'var heroes = ' . $json->encode ([ @heroes ]);
+  $content .= ', heroes_bg = ' . $json->encode ([ @heroes_bg ]);
+  $content .= ', heroes_wr = ' . $json->encode ([ @heroes_wr ]);
+  $content .= ', win_rates = ' . $json->encode ([ @win_rates ]);
+  $content .= ', update_time = "' . strftime("%Y-%m-%d", localtime (time ())) . '";\n';
 
-  print $fh 'var heroes = ', $json->encode ([ @heroes ]);
-  print $fh ', heroes_bg = ', $json->encode ([ @heroes_bg ]);
-  print $fh ', heroes_wr = ', $json->encode ([ @heroes_wr ]);
-  print $fh ', win_rates = ', $json->encode ([ @win_rates ]);
-  print $fh ', update_time = "',
-               strftime("%Y-%m-%d", localtime (time ())),
-               "";
-  print $fh '";';
-  print $fh "\n";
-  close $fh;
-  warn "Wrote cs.json\n";
+  open my $fh, '>cs.json';
+  print $fh $content; close $fh;
+  if (open my $fh2, '>cs.js') { print $fh2 $content; close $fh2; }
+  warn "Wrote cs.json and cs.js\n";
 }
 
 
