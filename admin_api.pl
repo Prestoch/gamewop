@@ -322,7 +322,8 @@ sub send_test_email {
   # Fallback: sendmail
   my $sendmail = '/usr/sbin/sendmail';
   if (-x $sendmail) {
-    my $pid = open(my $mail, '|-', "$sendmail -t");
+    my $cmd = $from ? "$sendmail -t -f $from" : "$sendmail -t";
+    my $pid = open(my $mail, '|-', $cmd);
     if ($pid) {
       print $mail "From: $from\n" if $from;
       print $mail "To: $to\n";
