@@ -84,6 +84,33 @@
                       <input id="email-from" type="email" class="form-control" placeholder="sender@example.com">
                     </div>
                     <div class="form-group">
+                      <label>SMTP (optional)</label>
+                      <div class="row">
+                        <div class="col-sm-6" style="margin-bottom:6px;">
+                          <input id="smtp-host" type="text" class="form-control" placeholder="SMTP host (e.g. smtp.gmail.com)">
+                        </div>
+                        <div class="col-sm-3" style="margin-bottom:6px;">
+                          <input id="smtp-port" type="number" class="form-control" placeholder="Port (e.g. 587)">
+                        </div>
+                        <div class="col-sm-3" style="margin-bottom:6px;">
+                          <select id="smtp-security" class="form-control">
+                            <option value="starttls">STARTTLS</option>
+                            <option value="ssl">SSL/TLS</option>
+                            <option value="none">None</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div class="row">
+                        <div class="col-sm-6" style="margin-bottom:6px;">
+                          <input id="smtp-username" type="text" class="form-control" placeholder="SMTP username (email)">
+                        </div>
+                        <div class="col-sm-6" style="margin-bottom:6px;">
+                          <input id="smtp-password" type="password" class="form-control" placeholder="SMTP password or app password">
+                        </div>
+                      </div>
+                      <p class="help">If empty, server will try system sendmail. For Gmail, use app password, port 587, STARTTLS.</p>
+                    </div>
+                    <div class="form-group">
                       <label>Notify when</label>
                       <div class="radio">
                         <label><input type="radio" name="cond-logic" id="condition-logic-all" checked> All selected conditions are met</label>
@@ -242,6 +269,12 @@
           var s = res.settings || {};
           $('#email-to').val(s.email_to || '');
           $('#email-from').val(s.email_from || '');
+          var sm = s.smtp || {};
+          $('#smtp-host').val(sm.host || '');
+          $('#smtp-port').val(sm.port || '');
+          $('#smtp-username').val(sm.username || '');
+          $('#smtp-password').val('');
+          $('#smtp-security').val((sm.security || 'starttls'));
           $('#condition-logic-all').prop('checked', (s.condition_logic || 'all') === 'all');
           $('#condition-logic-any').prop('checked', (s.condition_logic || 'all') === 'any');
           $('#cond1-enabled').prop('checked', !!(s.total_adv ? (s.total_adv.enabled!==false) : true));
@@ -281,6 +314,13 @@
         return {
           email_to: $('#email-to').val().trim(),
           email_from: $('#email-from').val().trim(),
+          smtp: {
+            host: $('#smtp-host').val().trim(),
+            port: parseInt($('#smtp-port').val(), 10) || undefined,
+            username: $('#smtp-username').val().trim(),
+            password: $('#smtp-password').val(),
+            security: $('#smtp-security').val()
+          },
           condition_logic: $('#condition-logic-all').is(':checked') ? 'all' : 'any',
           total_adv: {
             enabled: $('#cond1-enabled').is(':checked'),

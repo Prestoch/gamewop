@@ -8,6 +8,10 @@ use File::Spec;
 use File::Basename qw(dirname);
 use Cwd qw(abs_path);
 use Time::HiRes qw(usleep);
+use Try::Tiny;
+use MIME::Base64 ();
+eval { require Net::SMTP; 1 };
+eval { require Net::SMTPS; 1 };
 
 my $BASE_DIR = dirname(abs_path($0));
 sub local_file { my ($f) = @_; return File::Spec->catfile($BASE_DIR, $f); }
@@ -278,6 +282,44 @@ sub send_test_email {
   return (0, 'Missing recipient email') unless $to;
   my $subject = 'DotaBuffCP test email';
   my $body = "This is a test email from DotaBuffCP admin panel.";
+  # Try SMTP if configured
+  my $smtp = $settings->{smtp} || {};
+  if ($smtp->{host}) {
+    my $host = $smtp->{host};
+    my $port = $smtp->{port} || (($smtp->{security}||'starttls') eq 'ssl' ? 465 : 587);
+    my $sec  = lc($smtp->{security}||'starttls');
+    my $user = $smtp->{username} || '';
+    my $pass = $smtp->{password} || '';
+    my $mailer;
+    my $ok = 0; my $err='';
+    try {
+      if ($sec eq 'ssl') {
+        die 'Net::SMTPS not available' unless $Net::SMTPS::VERSION;
+        $mailer = Net::SMTPS->new($host, Port => $port, doSSL => 'ssl', Timeout => 20);
+      } else {
+        $mailer = Net::SMTP->new($host, Port => $port, Timeout => 20);
+      }
+      die 'connect failed' unless $mailer;
+      if ($sec eq 'starttls') { $mailer->starttls() if $mailer->can('starttls'); }
+      if ($user && $pass) { $mailer->auth($user, $pass) or die 'auth failed'; }
+      my $from_addr = $from || $user || 'noreply@example.com';
+      $mailer->mail($from_addr);
+      $mailer->to($to);
+      $mailer->data();
+      $mailer->datasend("From: $from_addr\n");
+      $mailer->datasend("To: $to\n");
+      $mailer->datasend("Subject: $subject\n");
+      $mailer->datasend("\n$body\n");
+      $mailer->dataend();
+      $mailer->quit;
+      $ok = 1;
+    } catch {
+      $err = $_;
+      $ok = 0;
+    };
+    return ($ok ? (1,'sent via SMTP') : (0, 'SMTP failed: '.$err));
+  }
+  # Fallback: sendmail
   my $sendmail = '/usr/sbin/sendmail';
   if (-x $sendmail) {
     my $pid = open(my $mail, '|-', "$sendmail -t");
@@ -286,10 +328,10 @@ sub send_test_email {
       print $mail "To: $to\n";
       print $mail "Subject: $subject\n\n$body\n";
       close $mail;
-      return (1, 'sent');
+      return (1, 'sent via sendmail');
     }
   }
-  return (0, 'sendmail not available');
+  return (0, 'No SMTP configured and sendmail unavailable');
 }
 
 sub kill_pid {
