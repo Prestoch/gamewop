@@ -28,7 +28,7 @@ sub url_encode { my ($s)=@_; $s//= ''; $s =~ s/([^A-Za-z0-9\-_.~])/sprintf("%%%0
 
 sub http_get_text {
   my ($url) = @_;
-  my $res = $http->get($url);
+  my $res = $http->get($url, { headers => { 'Accept-Encoding' => 'identity', 'User-Agent' => ($http->{agent}||'curl') } });
   return $res->{success} ? ($res->{content} || '') : '';
 }
 
@@ -120,9 +120,20 @@ sub load_cs {
   die "cs.json parse error: heroes_wr" unless $wr;
   die "cs.json parse error: win_rates" unless $mat;
   my $j = JSON::PP->new;
-  @HEROES     = @{ $j->decode($h) };
-  @HEROES_WR  = @{ $j->decode($wr) };
-  @WIN_RATES  = @{ $j->decode($mat) };
+  my $heroes_ref   = eval { $j->decode($h) };
+  if ($@ || ref $heroes_ref ne 'ARRAY') { die "cs.json decode heroes failed: $@"; }
+  my $wr_ref       = eval { $j->decode($wr) };
+  if ($@ || ref $wr_ref ne 'ARRAY') { die "cs.json decode heroes_wr failed: $@"; }
+  my $mat_ref      = eval { $j->decode($mat) };
+  if ($@ || ref $mat_ref ne 'ARRAY') {
+    print STDOUT "cs.json debug heroes prefix: ".substr($h,0,80)."...\n";
+    print STDOUT "cs.json debug wr prefix: ".substr($wr,0,80)."...\n";
+    print STDOUT "cs.json debug win_rates prefix: ".substr($mat,0,80)."...\n";
+    die "cs.json decode win_rates failed: $@";
+  }
+  @HEROES    = @{ $heroes_ref };
+  @HEROES_WR = @{ $wr_ref };
+  @WIN_RATES = @{ $mat_ref };
 }
 
 sub normalize_name {
