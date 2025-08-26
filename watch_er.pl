@@ -20,6 +20,7 @@ my $SCRAPEDO_API_KEY = $ENV{SCRAPEDO_API_KEY} // '';
 my $SCRAPEDO_ENDPOINT = $ENV{SCRAPEDO_ENDPOINT} // 'https://api.scrape.do';
 my $SCRAPEDO_RENDER = $ENV{SCRAPEDO_RENDER} // '';
 my $DEBUG = $ENV{WATCH_DEBUG} ? 1 : 0;
+my $SCRAPEDO_HEADERS = $ENV{SCRAPEDO_HEADERS} // '{"Accept":"application/json","Accept-Encoding":"identity"}';
 
 my $http = HTTP::Tiny->new(
   agent => 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36 Perl-HTTP::Tiny',
@@ -39,6 +40,7 @@ sub fetch_with_scrapedo {
   return '' unless $SCRAPEDO_API_KEY;
   my $qs = 'token=' . url_encode($SCRAPEDO_API_KEY) . '&url=' . url_encode($url);
   $qs .= '&render=true' if $SCRAPEDO_RENDER && $SCRAPEDO_RENDER =~ /^(1|true|yes)$/i;
+  $qs .= '&headers=' . url_encode($SCRAPEDO_HEADERS) if $SCRAPEDO_HEADERS;
   my $api_url = $SCRAPEDO_ENDPOINT . '?' . $qs;
   return http_get_text($api_url);
 }
