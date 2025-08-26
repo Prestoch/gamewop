@@ -294,8 +294,8 @@ sub main_loop {
         $body .= "Team A: $namesA\n";
         $body .= "Team B: $namesB\n";
         my $ok = send_email_via_sendmail(to=>$to, from=>$from, subject=>$subject, body=>$body);
-        if ($ok) { $st->{alerts} = ($st->{alerts}||0) + 1; $st->{last_alert_at} = time; save_status($st); print STDOUT "ALERT sent for $u (diff=$diff)\n"; }
-        else { print STDOUT "ALERT FAILED for $u (diff=$diff)\n"; }
+        if ($ok) { $st->{alerts} = ($st->{alerts}||0) + 1; $st->{last_alert_at} = time; save_status($st); print STDOUT "ALERT sent (API) diff=$diff\n"; }
+        else { print STDOUT "ALERT FAILED (API) diff=$diff\n"; }
       } else {
         print STDOUT sprintf("No alert (API): diff=%.2f\n", $diff);
       }
