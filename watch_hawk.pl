@@ -222,39 +222,104 @@ sub main_loop {
 
   my %seen;
   while (1) {
-    my $live_html='';
-    for my $p (@HAWK_LIVE_PATHS){ my $u=url_cat($HAWK_BASE,$p); $live_html = fetch_html($u); last if $live_html && $live_html =~ /match/i; }
     my $checked=0; my $found=0;
-    if ($live_html) {
-      my $urls = parse_live_links($live_html);
-      for my $u (@$urls){
-        $checked++;
-        my $html = fetch_html($u); next unless $html && $html =~ /hero|pick|draft/i;
-        my ($a,$b) = extract_picks_from_html($html); next unless $a && $b && (@$a+@$b)>=2;
-        my $key = join(',',@$a).'|'.join(',',@$b); next if $seen{$key}++;
-        $found++;
-        my $scoreA = team_score($a,$b); my $scoreB = team_score($b,$a); my $diff = $scoreA-$scoreB;
-        my @conds; if($ta_en && (defined $ta_min || defined $ta_max)){ my $ok=0; $ok||=(defined $ta_min && $diff>=$ta_min); $ok||=(defined $ta_max && $diff<=$ta_max); push @conds,$ok?1:0 }
-        if($ha_en && defined $ha_thr){ my $ok = any_hero_adv_threshold($b,$ha_cond,$ha_thr); push @conds,$ok?1:0 }
-        if($wh_en && %wh){ my $ok=0; for my $hid (@$a,@$b){ next unless $hid>=0; my $nm=normalize_name($HEROES[$hid]||''); if($wh{$nm}){ $ok=1; last } } push @conds,$ok?1:0 }
-        my $alert = (!@conds) ? 0 : ($logic eq 'all' ? ((grep{!$_}@conds)?0:1) : ((grep{$_}@conds)?1:0));
-        if($alert){
-          my $to=$s->{email_to}||''; my $from=$s->{email_from}||''; my $sub=sprintf('[Dota Watcher] Hawk.live (diff=%.2f)',$diff);
-          my $namesA=join(', ', map{$HEROES[$_]}@$a); my $namesB=join(', ', map{$HEROES[$_]}@$b);
-          my $body="Match: $u\n" . sprintf("Diff (A-B): %.4f\n\n",$diff);
-          $body .= "Team A: $namesA\nTeam B: $namesB\n\n";
-          $body .= "Team A base (log-odds):\n";
-          for my $idA (@$a){ next unless defined $idA && $idA>=0 && defined $HEROES_WR[$idA]; my $wrA=0.0+$HEROES_WR[$idA]; my $baseA=logit($wrA/100.0)-logit(0.5); $body .= sprintf("  - %s: %.4f (WR %.2f%%)\n",$HEROES[$idA],$baseA,$wrA) }
-          $body .= sprintf("Team A matchups (weighted, lambda=%.2f):\n", $ADV_LAMBDA);
-          for my $idA (@$a){ next unless defined $idA && $idA>=0; my @t; my $sA=0; for my $idB (@$b){ next unless defined $idB && $idB>=0; my $t=-edge_adv_for($idA,$idB); push @t, sprintf("%.2f",$t); $sA += $t } $body .= sprintf("  - %s: [%s] sum=%.2f\n", $HEROES[$idA], join(', ',@t), $sA) }
-          $body .= "\nTeam B base (log-odds):\n";
-          for my $idB (@$b){ next unless defined $idB && $idB>=0 && defined $HEROES_WR[$idB]; my $wrB=0.0+$HEROES_WR[$idB]; my $baseB=logit($wrB/100.0)-logit(0.5); $body .= sprintf("  - %s: %.4f (WR %.2f%%)\n",$HEROES[$idB],$baseB,$wrB) }
-          $body .= sprintf("Team B matchups (weighted, lambda=%.2f):\n", $ADV_LAMBDA);
-          for my $idB (@$b){ next unless defined $idB && $idB>=0; my @tB; my $sB=0; for my $idA (@$a){ next unless defined $idA && $idA>=0; my $tB=-edge_adv_for($idB,$idA); push @tB, sprintf("%.2f",$tB); $sB += $tB } $body .= sprintf("  - %s: [%s] sum=%.2f\n", $HEROES[$idB], join(', ',@tB), $sB) }
-          $body .= sprintf("\nScore A: %.2f\nScore B: %.2f\nDiff: %.2f\n", team_score($a,$b), team_score($b,$a), $diff);
-          if(send_email(to=>$to,from=>$from,subject=>$sub,body=>$body)){ $st->{alerts}=($st->{alerts}||0)+1; $st->{last_alert_at}=time; print STDOUT "ALERT sent (API) diff=$diff\n" } else { print STDOUT "ALERT FAILED (API) diff=$diff\n" }
-        } else {
-          print STDOUT sprintf("No alert (API): diff=%.2f\n", $diff);
+
+    # Try JSON endpoints discovered from app bundle
+    my $apis = discover_hawk_endpoints();
+    my $handled = 0;
+    if ($apis && ref $apis eq 'ARRAY' && @$apis) {
+      for my $api (@$apis) {
+        my $data = fetch_json($api);
+        next unless $data;
+        my $list = [];
+        if (ref $data eq 'ARRAY') { $list = $data; }
+        elsif (ref $data eq 'HASH') {
+          for my $k (qw/matches live liveMatches events games data list/) {
+            if (ref $data->{$k} eq 'ARRAY') { $list = $data->{$k}; last; }
+          }
+        }
+        if (ref $list eq 'ARRAY' && @$list) {
+          $handled = 1;
+          for my $m (@$list) {
+            $checked++;
+            # Heuristic: extract hero names from fields
+            my (@a,@b);
+            if (ref $m eq 'HASH') {
+              for my $k (qw/picks picksBans teamPicks team_picks radiantPicks direPicks/) {
+                if (ref $m->{$k} eq 'ARRAY') {
+                  for my $e (@{ $m->{$k} }) {
+                    next unless ref $e eq 'HASH';
+                    my $isPick = defined $e->{isPick} ? ($e->{isPick}?1:0) : 1;
+                    next unless $isPick;
+                    my $isRad = ($e->{isRadiant}||$e->{radiant}||$e->{team}&&lc($e->{team})eq'radiant') ? 1 : 0;
+                    my $name = '';
+                    if (ref $e->{hero} eq 'HASH') { $name = $e->{hero}{displayName} // $e->{hero}{name} // $e->{hero}{shortName} // ''; }
+                    $name ||= $e->{heroName} // $e->{name} // '';
+                    next unless $name;
+                    my $idx = hero_index_by_name($name); next unless $idx>=0;
+                    if ($isRad) { push @a,$idx; } else { push @b,$idx; }
+                  }
+                }
+              }
+            }
+            @a=@a[0..4] if @a>5; @b=@b[0..4] if @b>5;
+            next unless @a+@b >= 2;
+            my $key = join(',',@a).'|'.join(',',@b); next if $seen{$key}++;
+            $found++;
+            my $scoreA=team_score(\@a,\@b); my $scoreB=team_score(\@b,\@a); my $diff=$scoreA-$scoreB;
+            my @conds; if($ta_en && (defined $ta_min || defined $ta_max)){ my $ok=0; $ok||=(defined $ta_min && $diff>=$ta_min); $ok||=(defined $ta_max && $diff<=$ta_max); push @conds,$ok?1:0 }
+            if($ha_en && defined $ha_thr){ my $ok = any_hero_adv_threshold(\@b,$ha_cond,$ha_thr); push @conds,$ok?1:0 }
+            if($wh_en && %wh){ my $ok=0; for my $hid (@a,@b){ next unless $hid>=0; my $nm=normalize_name($HEROES[$hid]||''); if($wh{$nm}){ $ok=1; last } } push @conds,$ok?1:0 }
+            my $alert = (!@conds)?0:($logic eq 'all' ? ((grep{!$_}@conds)?0:1) : ((grep{$_}@conds)?1:0));
+            if($alert){
+              my $to=$s->{email_to}||''; my $from=$s->{email_from}||''; my $sub=sprintf('[Dota Watcher] Hawk.live (diff=%.2f)',$diff);
+              my $namesA=join(', ', map{$HEROES[$_]}@a); my $namesB=join(', ', map{$HEROES[$_]}@b);
+              my $body=sprintf("Diff (A-B): %.4f\n\n",$diff) . "Team A: $namesA\nTeam B: $namesB\n\n";
+              $body .= "Team A base (log-odds):\n"; for my $idA (@a){ next unless defined $idA && $idA>=0 && defined $HEROES_WR[$idA]; my $wrA=0.0+$HEROES_WR[$idA]; my $baseA=logit($wrA/100.0)-logit(0.5); $body .= sprintf("  - %s: %.4f (WR %.2f%%)\n",$HEROES[$idA],$baseA,$wrA) }
+              $body .= sprintf("Team A matchups (weighted, lambda=%.2f):\n", $ADV_LAMBDA); for my $idA (@a){ next unless defined $idA && $idA>=0; my @t; my $sA=0; for my $idB (@b){ next unless defined $idB && $idB>=0; my $t=-edge_adv_for($idA,$idB); push @t, sprintf("%.2f",$t); $sA += $t } $body .= sprintf("  - %s: [%s] sum=%.2f\n", $HEROES[$idA], join(', ',@t), $sA) }
+              $body .= "\nTeam B base (log-odds):\n"; for my $idB (@b){ next unless defined $idB && $idB>=0 && defined $HEROES_WR[$idB]; my $wrB=0.0+$HEROES_WR[$idB]; my $baseB=logit($wrB/100.0)-logit(0.5); $body .= sprintf("  - %s: %.4f (WR %.2f%%)\n",$HEROES[$idB],$baseB,$wrB) }
+              $body .= sprintf("Team B matchups (weighted, lambda=%.2f):\n", $ADV_LAMBDA); for my $idB (@b){ next unless defined $idB && $idB>=0; my @tB; my $sB=0; for my $idA (@a){ next unless defined $idA && $idA>=0; my $tB=-edge_adv_for($idB,$idA); push @tB, sprintf("%.2f",$tB); $sB += $tB } $body .= sprintf("  - %s: [%s] sum=%.2f\n", $HEROES[$idB], join(', ',@tB), $sB) }
+              $body .= sprintf("\nScore A: %.2f\nScore B: %.2f\nDiff: %.2f\n", $scoreA,$scoreB,$diff);
+              if(send_email(to=>$to,from=>$from,subject=>$sub,body=>$body)){ $st->{alerts}=($st->{alerts}||0)+1; $st->{last_alert_at}=time; print STDOUT "ALERT sent (API) diff=$diff\n" } else { print STDOUT "ALERT FAILED (API) diff=$diff\n" }
+            } else { print STDOUT sprintf("No alert (API): diff=%.2f\n", $diff); }
+          }
+        }
+      }
+    }
+
+    # Fallback to HTML if no JSON candidates matched
+    if (!$handled) {
+      my $live_html='';
+      for my $p (@HAWK_LIVE_PATHS){ my $u=url_cat($HAWK_BASE,$p); $live_html = fetch_html($u); last if $live_html && $live_html =~ /match/i; }
+      if ($live_html) {
+        my $urls = parse_live_links($live_html);
+        for my $u (@$urls){
+          $checked++;
+          my $html = fetch_html($u); next unless $html && $html =~ /hero|pick|draft/i;
+          my ($a,$b) = extract_picks_from_html($html); next unless $a && $b && (@$a+@$b)>=2;
+          my $key = join(',',@$a).'|'.join(',',@$b); next if $seen{$key}++;
+          $found++;
+          my $scoreA = team_score($a,$b); my $scoreB = team_score($b,$a); my $diff = $scoreA-$scoreB;
+          my @conds; if($ta_en && (defined $ta_min || defined $ta_max)){ my $ok=0; $ok||=(defined $ta_min && $diff>=$ta_min); $ok||=(defined $ta_max && $diff<=$ta_max); push @conds,$ok?1:0 }
+          if($ha_en && defined $ha_thr){ my $ok = any_hero_adv_threshold($b,$ha_cond,$ha_thr); push @conds,$ok?1:0 }
+          if($wh_en && %wh){ my $ok=0; for my $hid (@$a,@$b){ next unless $hid>=0; my $nm=normalize_name($HEROES[$hid]||''); if($wh{$nm}){ $ok=1; last } } push @conds,$ok?1:0 }
+          my $alert = (!@conds) ? 0 : ($logic eq 'all' ? ((grep{!$_}@conds)?0:1) : ((grep{$_}@conds)?1:0));
+          if($alert){
+            my $to=$s->{email_to}||''; my $from=$s->{email_from}||''; my $sub=sprintf('[Dota Watcher] Hawk.live (diff=%.2f)',$diff);
+            my $namesA=join(', ', map{$HEROES[$_]}@$a); my $namesB=join(', ', map{$HEROES[$_]}@$b);
+            my $body="Match: $u\n" . sprintf("Diff (A-B): %.4f\n\n",$diff);
+            $body .= "Team A: $namesA\nTeam B: $namesB\n\n";
+            $body .= "Team A base (log-odds):\n";
+            for my $idA (@$a){ next unless defined $idA && $idA>=0 && defined $HEROES_WR[$idA]; my $wrA=0.0+$HEROES_WR[$idA]; my $baseA=logit($wrA/100.0)-logit(0.5); $body .= sprintf("  - %s: %.4f (WR %.2f%%)\n",$HEROES[$idA],$baseA,$wrA) }
+            $body .= sprintf("Team A matchups (weighted, lambda=%.2f):\n", $ADV_LAMBDA);
+            for my $idA (@$a){ next unless defined $idA && $idA>=0; my @t; my $sA=0; for my $idB (@$b){ next unless defined $idB && $idB>=0; my $t=-edge_adv_for($idA,$idB); push @t, sprintf("%.2f",$t); $sA += $t } $body .= sprintf("  - %s: [%s] sum=%.2f\n", $HEROES[$idA], join(', ',@t), $sA) }
+            $body .= "\nTeam B base (log-odds):\n";
+            for my $idB (@$b){ next unless defined $idB && $idB>=0 && defined $HEROES_WR[$idB]; my $wrB=0.0+$HEROES_WR[$idB]; my $baseB=logit($wrB/100.0)-logit(0.5); $body .= sprintf("  - %s: %.4f (WR %.2f%%)\n",$HEROES[$idB],$baseB,$wrB) }
+            $body .= sprintf("Team B matchups (weighted, lambda=%.2f):\n", $ADV_LAMBDA);
+            for my $idB (@$b){ next unless defined $idB && $idB>=0; my @tB; my $sB=0; for my $idA (@$a){ next unless defined $idA && $idA>=0; my $tB=-edge_adv_for($idB,$idA); push @tB, sprintf("%.2f",$tB); $sB += $tB } $body .= sprintf("  - %s: [%s] sum=%.2f\n", $HEROES[$idB], join(', ',@tB), $sB) }
+            $body .= sprintf("\nScore A: %.2f\nScore B: %.2f\nDiff: %.2f\n", team_score($a,$b), team_score($b,$a), $diff);
+            if(send_email(to=>$to,from=>$from,subject=>$sub,body=>$body)){ $st->{alerts}=($st->{alerts}||0)+1; $st->{last_alert_at}=time; print STDOUT "ALERT sent (API) diff=$diff\n" } else { print STDOUT "ALERT FAILED (API) diff=$diff\n" }
+          } else { print STDOUT sprintf("No alert (API): diff=%.2f\n", $diff); }
         }
       }
     }
