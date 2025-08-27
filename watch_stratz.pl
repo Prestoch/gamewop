@@ -265,9 +265,9 @@ sub per_hero_totals {
   my ($team,$enemy)=@_;
   my @vals;
   for my $hid (@$team) {
-    my $base=0.0; if (defined $hid && $hid>=0 && defined $HEROES_WR[$hid]) { my $wr=0.0+$HEROES_WR[$hid]; $base = (logit($wr/100.0)-logit(0.5)); }
+    my $wr = (defined $hid && $hid>=0 && defined $HEROES_WR[$hid]) ? (0.0+$HEROES_WR[$hid]) : 0.0;
     my $sum=0.0; if (defined $hid && $hid>=0) { for my $eid (@$enemy){ next unless defined $eid && $eid>=0; $sum += -edge_adv_for($hid,$eid) } }
-    push @vals, ($base+$sum);
+    push @vals, ($wr+$sum);
   }
   return \@vals;
 }
@@ -278,7 +278,7 @@ sub build_email_html {
   my $advA = per_hero_advantages($A,$B); my $advB = per_hero_advantages($B,$A);
   my $mk=sub{ my($ids,$valsTotals,$valsAdv)=@_; my($r1,$r2)=('',''); for(my $i=0;$i<5;$i++){ my $id=$ids->[$i]//-1; my $src=hero_icon_url($id); my $nm=$HEROES[$id]//''; my $img=$src? sprintf('<img src="%s" alt="%s" style="width:96px;height:auto;display:block;margin:0 auto;border-radius:6px;">',$src,$nm):'<div style="width:96px;height:54px;background:#eee;display:block;margin:0 auto;border-radius:6px;"></div>'; my $v=$valsAdv->[$i]//0; my $wr=(defined $HEROES_WR[$id])?sprintf('%.2f',$HEROES_WR[$id]):'--'; my $sign=$v>=0?'+':'-'; my $abs=sprintf('%.2f',abs($v)); my $col=$v>=0?'#0a0':'#c00'; $r1.='<td style="text-align:center;padding:8px 6px;">'.$img.'</td>'; $r2.='<td style="text-align:center;padding:0 6px 10px 6px;color:'.$col.';font:14px/16px Arial,Helvetica,sans-serif;">'.$wr.' '.$sign.' '.$abs.'</td>'; } return ($r1,$r2); };
   my ($r1a,$r2a)=$mk->($A,$totA,$advA); my ($r1b,$r2b)=$mk->($B,$totB,$advB);
-  my $sumA=0; $sumA+=$_ for @$totA; my $sumB=0; $sumB+=$_ for @$totB; my $diff=$sumA-$sumB; my $diff_col=$diff>=0?'#0a0':'#c00';
+  my $sumA=0; $sumA+=$_ for @$totA; my $sumB=0; $sumB+=$_ for @$totB; my $diff_col=($sumB>=$sumA)?'#0a0':'#c00';
   my $html='';
   $html.='<html><body style="margin:0;padding:12px 12px 16px 12px;background:#fff;">';
   if ($series_name) { $html.=sprintf('<div style="font:700 18px/22px Arial,Helvetica,sans-serif;margin:0 0 6px 0;">%s</div>',$series_name); }
@@ -288,7 +288,7 @@ sub build_email_html {
   $html.='<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;"><tr>'.$r1a.'</tr><tr>'.$r2a.'</tr></table>';
   $html.=sprintf('<div style="font:700 13px Arial,Helvetica,sans-serif;margin:16px 0 4px 0;">%s</div>',$teamBName);
   $html.='<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;"><tr>'.$r1b.'</tr><tr>'.$r2b.'</tr></table>';
-  $html.=sprintf('<div style="text-align:center;margin:12px 0 0 0;font:700 26px/28px Arial,Helvetica,sans-serif;color:%s;">%s</div>', $diff_col, fmt_adv($diff));
+  $html.=sprintf('<div style="text-align:center;margin:12px 0 0 0;font:700 26px/28px Arial,Helvetica,sans-serif;color:%s;">%.2f</div>', $diff_col, $sumB);
   $html.='</div>';
   $html.='</body></html>';
   return $html;
