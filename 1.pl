@@ -134,11 +134,20 @@ sub fetch_with_cf {
 
   if ($FLARESOLVERR_URL && flare_healthy()) {
     # Use one-off request without session (more reliable on your setup)
-    my $payload = '{"cmd":"request.get","url":"' . $url . '","maxTimeout":120000' .
-                  ',"headers":{"User-Agent":"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36","Accept-Language":"en-US,en;q=0.9","Accept":"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"}}';
+    my $accept = join(',', 'text/html','application/xhtml+xml','application/xml;q=0.9','*'.'/'.'*;q=0.8');
+    my $payload_obj = {
+      cmd => 'request.get',
+      url => $url,
+      maxTimeout => 120000,
+      headers => {
+        'User-Agent' => 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+        'Accept-Language' => 'en-US,en;q=0.9',
+        'Accept' => $accept,
+      },
+    };
     my $res = $http->post ($FLARESOLVERR_URL, {
       headers => { 'Content-Type' => 'application/json' },
-      content => $payload,
+      content => encode_json($payload_obj),
     });
     if ($res->{success}) {
       my $data;
