@@ -440,7 +440,10 @@ sub main_loop {
             }
             @a=@a[0..4] if @a>5; @b=@b[0..4] if @b>5;
             next unless @a+@b >= 2;
-            my $key = join(',',@a).'|'.join(',',@b); next if $seen{$key}++;
+            my $mid = '';
+            if (ref $m eq 'HASH') { $mid = $m->{id} // $m->{matchId} // $m->{gameId} // $m->{url} // $m->{webUrl} // ''; }
+            my $key = ($mid ? ($mid.'#') : '') . join(',',@a).'|'.join(',',@b);
+            next if $seen{$key}++;
             $found++;
             my $scoreA=team_score(\@a,\@b); my $scoreB=team_score(\@b,\@a); my $diff=$scoreA-$scoreB;
             my $tA = per_hero_totals(\@a,\@b); my $tB = per_hero_totals(\@b,\@a);
@@ -476,7 +479,8 @@ sub main_loop {
           $checked++;
           my $html = fetch_html($u); next unless $html && $html =~ /hero|pick|draft/i;
           my ($a,$b) = extract_picks_from_html($html); next unless $a && $b && (@$a+@$b)>=2;
-          my $key = join(',',@$a).'|'.join(',',@$b); next if $seen{$key}++;
+          my ($mid) = $u =~ m{/(\d+)(?:/|$)}; $mid ||= '';
+          my $key = ($mid ? ($mid.'#') : '') . join(',',@$a).'|'.join(',',@$b); next if $seen{$key}++;
           $found++;
           my $scoreA = team_score($a,$b); my $scoreB = team_score($b,$a); my $diff = $scoreA-$scoreB;
           my $tA = per_hero_totals($a,$b); my $tB = per_hero_totals($b,$a);
