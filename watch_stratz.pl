@@ -313,14 +313,54 @@ sub main_loop {
       my $should_alert = (!@conds) ? 0 : (($cond_logic eq 'all') ? ((grep { !$_ } @conds)?0:1) : ((grep { $_ } @conds)?1:0));
       if ($should_alert) {
         my $to = $settings->{email_to}||''; my $from = $settings->{email_from}||'';
-        my $subject = sprintf('[Dota Watcher] STRATZ alert (diff=%.2f)', $diff);
-        my $namesA = join(', ', map { $HEROES[$_] } @$a);
-        my $namesB = join(', ', map { $HEROES[$_] } @$b);
+        my $teamAName = $m->{radiantTeamName} || 'Radiant';
+        my $teamBName = $m->{direTeamName}    || 'Dire';
+        my $subject = sprintf('[Dota Watcher] %s vs %s (diff=%.2f)', $teamAName, $teamBName, $diff);
+
+        # Detailed breakdown similar to index.html
         my $body = '';
         $body .= "Match: $url\n" if $url;
         $body .= sprintf("Diff (A-B): %.4f\n\n", $diff);
-        $body .= "Team A: $namesA\n";
-        $body .= "Team B: $namesB\n";
+
+        my $namesA = join(', ', map { $HEROES[$_] } @$a);
+        my $namesB = join(', ', map { $HEROES[$_] } @$b);
+        $body .= sprintf("Team A (%s): %s\n", $teamAName, $namesA);
+        $body .= sprintf("Team B (%s): %s\n\n", $teamBName, $namesB);
+
+        # Base contributions (log-odds) for each hero on A
+        $body .= "Team A base (log-odds):\n";
+        for my $idA (@$a) {
+          next unless defined $idA && $idA>=0 && defined $HEROES_WR[$idA];
+          my $wrA = 0.0 + $HEROES_WR[$idA];
+          my $baseA = logit($wrA/100.0) - logit(0.5);
+          $body .= sprintf("  - %s: %.4f (WR %.2f%%)\n", $HEROES[$idA], $baseA, $wrA);
+        }
+        $body .= sprintf("Team A matchups (weighted, lambda=%.2f):\n", $ADV_LAMBDA);
+        for my $idA (@$a) {
+          next unless defined $idA && $idA>=0;
+          my @terms; my $sumA=0.0;
+          for my $idB (@$b) { next unless defined $idB && $idB>=0; my $t = - edge_adv_for($idA,$idB); push @terms, sprintf("%.2f", $t); $sumA += $t; }
+          $body .= sprintf("  - %s: [%s] sum=%.2f\n", $HEROES[$idA], join(', ', @terms), $sumA);
+        }
+
+        # Base contributions for B
+        $body .= "\nTeam B base (log-odds):\n";
+        for my $idB (@$b) {
+          next unless defined $idB && $idB>=0 && defined $HEROES_WR[$idB];
+          my $wrB = 0.0 + $HEROES_WR[$idB];
+          my $baseB = logit($wrB/100.0) - logit(0.5);
+          $body .= sprintf("  - %s: %.4f (WR %.2f%%)\n", $HEROES[$idB], $baseB, $wrB);
+        }
+        $body .= sprintf("Team B matchups (weighted, lambda=%.2f):\n", $ADV_LAMBDA);
+        for my $idB (@$b) {
+          next unless defined $idB && $idB>=0;
+          my @termsB; my $sumB=0.0;
+          for my $idA (@$a) { next unless defined $idA && $idA>=0; my $tB = - edge_adv_for($idB,$idA); push @termsB, sprintf("%.2f", $tB); $sumB += $tB; }
+          $body .= sprintf("  - %s: [%s] sum=%.2f\n", $HEROES[$idB], join(', ', @termsB), $sumB);
+        }
+
+        $body .= sprintf("\nScore A: %.2f\nScore B: %.2f\nDiff: %.2f\n", $scoreA, $scoreB, $diff);
+
         my $ok = send_email_via_sendmail(to=>$to, from=>$from, subject=>$subject, body=>$body);
         if ($ok) { $st->{alerts} = ($st->{alerts}||0)+1; $st->{last_alert_at}=time; print STDOUT "ALERT sent (API) diff=$diff\n"; }
         else { print STDOUT "ALERT FAILED (API) diff=$diff\n"; }
