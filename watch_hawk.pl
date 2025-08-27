@@ -453,7 +453,7 @@ sub main_loop {
               my $series = extract_series_from_match($m);
               my $sub = sprintf('%s vs %s', $teamAName, $teamBName);
               my $html = build_email_html(\@a,\@b,$teamAName,$teamBName,$series);
-              if(send_email(to=>$to,from=>$from,subject=>$sub,body=>$html,html=>1)){ $st->{alerts}=($st->{alerts}||0)+1; $st->{last_alert_at}=time; print STDOUT "ALERT sent (API) diff=$diff\n" } else { print STDOUT "ALERT FAILED (API) diff=$diff\n" }
+              if(send_email(to=>$to,from=>$from,subject=>$sub,body=>$html,html=>1)){ $st->{alerts}=($st->{alerts}||0)+1; $st->{last_alert_at}=time; print STDOUT sprintf("ALERT sent (API) diff_alert=%.2f (old_diff=%.2f)\n", $diff_alert, $diff) } else { print STDOUT sprintf("ALERT FAILED (API) diff_alert=%.2f (old_diff=%.2f)\n", $diff_alert, $diff) }
             } else { print STDOUT sprintf("No alert (API): diff_alert=%.2f\n", $diff_alert); }
           }
         }
@@ -489,7 +489,7 @@ sub main_loop {
             my $series = extract_series_from_html($html);
             my $sub = sprintf('%s vs %s', $teamAName, $teamBName);
             my $html_body = build_email_html($a,$b,$teamAName,$teamBName,$series);
-            if(send_email(to=>$to,from=>$from,subject=>$sub,body=>$html_body,html=>1)){ $st->{alerts}=($st->{alerts}||0)+1; $st->{last_alert_at}=time; print STDOUT "ALERT sent (API) diff=$diff\n" } else { print STDOUT "ALERT FAILED (API) diff=$diff\n" }
+            if(send_email(to=>$to,from=>$from,subject=>$sub,body=>$html_body,html=>1)){ $st->{alerts}=($st->{alerts}||0)+1; $st->{last_alert_at}=time; print STDOUT sprintf("ALERT sent (API) diff_alert=%.2f (old_diff=%.2f)\n", $diff_alert, $diff) } else { print STDOUT sprintf("ALERT FAILED (API) diff_alert=%.2f (old_diff=%.2f)\n", $diff_alert, $diff) }
           } else { print STDOUT sprintf("No alert (API): diff_alert=%.2f\n", $diff_alert); }
         }
       }
