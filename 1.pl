@@ -133,18 +133,18 @@ sub fetch_with_cf {
   my ($url) = @_;
 
   if ($FLARESOLVERR_URL && flare_healthy()) {
-    # Use one-off request without session (more reliable on your setup)
-    my $accept = join(',', 'text/html','application/xhtml+xml','application/xml;q=0.9','*'.'/'.'*;q=0.8');
+    # Use session mode (optional) or one-off request
+    my $use_session = $ENV{GEN_USE_SESSION} ? 1 : 0;
+    if ($use_session) { flare_session_create(); }
     my $payload_obj = {
       cmd => 'request.get',
       url => $url,
-      maxTimeout => 120000,
+      maxTimeout => 60000,
       headers => {
         'User-Agent' => 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
-        'Accept-Language' => 'en-US,en;q=0.9',
-        'Accept' => $accept,
       },
     };
+    $payload_obj->{session} = $FLARE_SESSION_ID if $use_session && $FLARE_SESSION_ID;
     my $res = $http->post ($FLARESOLVERR_URL, {
       headers => { 'Content-Type' => 'application/json' },
       content => encode_json($payload_obj),
@@ -239,7 +239,7 @@ sub get_dotabuff_counters_for_hero {
   # }
 
   # 2) Fetch counters page for matchup rows and (as fallback) Win Rate
-  my $url = 'https://www.dotabuff.com/heroes/' . $slug . '/counters';
+  my $url = 'https://www.dotabuff.com/heroes/' . $slug . '/counters?date=year';
   $DEBUG and warn "Getting Dotabuff counters for $heroes[$idx] at $url\n";
 
   my $html = fetch_with_cf ($url);
@@ -357,7 +357,7 @@ sub get_winrates_dotabuff {
 
 sub get_heroes {
   warn "Fetching hero list from Dotabuff via FlareSolverr\n";
-  my $list_url_primary = 'https://www.dotabuff.com/heroes?show=heroes&view=meta&mode=all-pick&date=7.39';
+  my $list_url_primary = 'https://www.dotabuff.com/heroes?show=heroes&view=meta&mode=all-pick&date=1y';
   # Fallback page removed to avoid facet-based duplicates
 
   my @pairs;
