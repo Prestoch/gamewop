@@ -238,12 +238,17 @@ sub extract_series_from_match {
 
 sub extract_series_from_html {
   my ($html)=@_;
+  # Prefer explicit series/tournament block from header side
+  if ($html =~ m{class=["'][^"']*v-block__header-side[^"']*["'][^>]*>([\s\S]*?)</[^>]+>}i) {
+    my $inner = $1; $inner =~ s/<[^>]+>/ /g; $inner =~ s/\s+/ /g; $inner =~ s/^\s+|\s+$//g; my $s = sanitize_series_name($inner); return $s if $s;
+  }
+  # Fallbacks (og:title or title)
   my $t='';
   if ($html =~ m{<meta[^>]+property\s*=\s*"og:title"[^>]+content\s*=\s*"([^"]+)"}i) { $t=$1; }
   elsif ($html =~ m{<title[^>]*>([^<]+)</title>}i) { $t=$1; }
   $t//= '';
   $t =~ s/\s+/ /g; $t =~ s/^\s+|\s+$//g;
-  if ($t =~ /\s(?:—|\|)\s*(.+?)\s*(?:\||$)/) { return $1; }
+  if ($t =~ /\s(?:—|\|)\s*(.+?)\s*(?:\||$)/) { return sanitize_series_name($1); }
   return '';
 }
 
@@ -365,7 +370,7 @@ sub build_email_html {
   my $html = '';
   $html .= '<html><body style="margin:0;padding:12px 12px 16px 12px;background:#fff;">';
   $series_name = sanitize_series_name($series_name);
-  if ($series_name) { $html .= sprintf('<div style="font:700 18px/22px Arial,Helvetica,sans-serif;margin:0 0 8px 0; text-align:left;">%s</div>', $series_name); }
+  if ($series_name) { $html .= sprintf('<div style="font:700 18px/22px Arial,Helvetica,sans-serif;margin:0 0 8px 0; text-align:left;">%s</div>', sanitize_series_name($series_name)); }
   $html .= '<div style="width:100%;max-width:560px;">';
   $html .= sprintf('<div style="font:700 12px Arial,Helvetica,sans-serif;margin:8px 0 4px 0;">%s</div>', $teamAName);
   $html .= '<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;"><tr>'.$r1a.'</tr><tr>'.$r2a.'</tr></table>';
