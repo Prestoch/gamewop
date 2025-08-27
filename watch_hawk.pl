@@ -428,7 +428,10 @@ sub main_loop {
             my $key = join(',',@a).'|'.join(',',@b); next if $seen{$key}++;
             $found++;
             my $scoreA=team_score(\@a,\@b); my $scoreB=team_score(\@b,\@a); my $diff=$scoreA-$scoreB;
-            my @conds; if($ta_en && (defined $ta_min || defined $ta_max)){ my $ok=0; $ok||=(defined $ta_min && $diff>=$ta_min); $ok||=(defined $ta_max && $diff<=$ta_max); push @conds,$ok?1:0 }
+            my $tA = per_hero_totals(\@a,\@b); my $tB = per_hero_totals(\@b,\@a);
+            my ($sumA2,$sumB2)=(0,0); $sumA2+=$_ for @$tA; $sumB2+=$_ for @$tB;
+            my $diff_alert = $sumA2 - $sumB2;
+            my @conds; if($ta_en && (defined $ta_min || defined $ta_max)){ my $ok=0; $ok||=(defined $ta_min && $diff_alert>=$ta_min); $ok||=(defined $ta_max && $diff_alert<=$ta_max); push @conds,$ok?1:0 }
             if($ha_en && defined $ha_thr){ my $ok = any_hero_adv_threshold(\@b,$ha_cond,$ha_thr); push @conds,$ok?1:0 }
             if($wh_en && %wh){ my $ok=0; for my $hid (@a,@b){ next unless $hid>=0; my $nm=normalize_name($HEROES[$hid]||''); if($wh{$nm}){ $ok=1; last } } push @conds,$ok?1:0 }
             my $alert = (!@conds)?0:($logic eq 'all' ? ((grep{!$_}@conds)?0:1) : ((grep{$_}@conds)?1:0));
@@ -460,7 +463,10 @@ sub main_loop {
           my $key = join(',',@$a).'|'.join(',',@$b); next if $seen{$key}++;
           $found++;
           my $scoreA = team_score($a,$b); my $scoreB = team_score($b,$a); my $diff = $scoreA-$scoreB;
-          my @conds; if($ta_en && (defined $ta_min || defined $ta_max)){ my $ok=0; $ok||=(defined $ta_min && $diff>=$ta_min); $ok||=(defined $ta_max && $diff<=$ta_max); push @conds,$ok?1:0 }
+          my $tA = per_hero_totals($a,$b); my $tB = per_hero_totals($b,$a);
+          my ($sumA2,$sumB2)=(0,0); $sumA2+=$_ for @$tA; $sumB2+=$_ for @$tB;
+          my $diff_alert = $sumA2 - $sumB2;
+          my @conds; if($ta_en && (defined $ta_min || defined $ta_max)){ my $ok=0; $ok||=(defined $ta_min && $diff_alert>=$ta_min); $ok||=(defined $ta_max && $diff_alert<=$ta_max); push @conds,$ok?1:0 }
           if($ha_en && defined $ha_thr){ my $ok = any_hero_adv_threshold($b,$ha_cond,$ha_thr); push @conds,$ok?1:0 }
           if($wh_en && %wh){ my $ok=0; for my $hid (@$a,@$b){ next unless $hid>=0; my $nm=normalize_name($HEROES[$hid]||''); if($wh{$nm}){ $ok=1; last } } push @conds,$ok?1:0 }
           my $alert = (!@conds) ? 0 : ($logic eq 'all' ? ((grep{!$_}@conds)?0:1) : ((grep{$_}@conds)?1:0));
