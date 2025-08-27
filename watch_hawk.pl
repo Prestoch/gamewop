@@ -160,7 +160,7 @@ sub hero_index_by_name {
 # Advantage helpers
 my $ADV_C=4000.0; my $ADV_LAMBDA=1.0;
 sub adv_shrink{ my($a,$n)=@_; my $nn=$n||0; return $a*($nn/($nn+$ADV_C)) }
-sub adv_clip  { my($a)=@_; 10.0 * tanh($a/10.0) }
+sub adv_clip  { my($a)=@_; my $x=$a/10.0; my $e=exp(2*$x); my $t=($e-1)/($e+1); 10.0 * $t }
 sub adv_weight{ my($a,$n)=@_; adv_clip(adv_shrink($a,$n)) }
 sub logit     { my($p)=@_; my $e=1e-6; $p= $p<$e?$e:($p>1-$e?1-$e:$p); log($p/(1-$p)) }
 sub edge_adv_for{ my($a,$b)=@_; return 0 unless $WIN_RATES[$b] && $WIN_RATES[$b][$a]; my $e=$WIN_RATES[$b][$a]; my $raw= -1.0*($e->[0]//0); my $n=0+($e->[2]//0); adv_weight($raw,$n) }
