@@ -215,6 +215,15 @@ sub sanitize_team_label {
   $s =~ s/\s{2,}/ /g; $s =~ s/^\s+|\s+$//g; return $s;
 }
 
+sub sanitize_series_name {
+  my ($s)=@_; $s//= '';
+  $s =~ s/^\s+|\s+$//g;
+  return '' if $s =~ /^hawk\s*\.?\s*live$/i;
+  return '' if $s =~ /^live$/i;
+  return '' if $s =~ /^match(?:es)?$/i;
+  return $s;
+}
+
 sub extract_series_from_match {
   my ($m)=@_; return '' unless ref $m eq 'HASH';
   for my $k (qw/seriesName series tournamentName tournament leagueName league eventName event title name/) {
