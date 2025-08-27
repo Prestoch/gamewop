@@ -114,7 +114,7 @@ sub load_settings {
   {}
 }
 
-my (@HEROES, @HEROES_WR, @WIN_RATES);
+my (@HEROES, @HEROES_WR, @WIN_RATES, @HEROES_BG);
 sub extract_json_array {
   my ($src, $needle) = @_;
   my $start = index($src, $needle);
@@ -135,11 +135,13 @@ sub load_cs {
   open my $fh,'<',$p or die "Missing cs.json\n";
   local $/; my $t=<$fh>; close $fh;
   my $h   = extract_json_array($t,'var heroes');
+  my $bg  = extract_json_array($t,'heroes_bg');
   my $wr  = extract_json_array($t,'heroes_wr');
   my $mat = extract_json_array($t,'win_rates');
   die "cs.json parse error\n" unless $h && $wr && $mat;
   my $j=JSON::PP->new;
   @HEROES    = @{ $j->decode($h) };
+  if ($bg) { @HEROES_BG = @{ $j->decode($bg) }; }
   @HEROES_WR = @{ $j->decode($wr) };
   @WIN_RATES = @{ $j->decode($mat) };
 }
@@ -195,10 +197,111 @@ sub extract_picks_from_html {
 sub send_email {
   my (%a)=@_;
   my $to=$a{to}||''; return 0 unless $to; my $from=$a{from}||'';
+  my $is_html = $a{html} ? 1 : 0;
   my $sm='/usr/sbin/sendmail'; return 0 unless -x $sm;
   my $cmd = $from ? "$sm -t -f $from" : "$sm -t";
   my $pid = open(my $m,'|-',$cmd) or return 0;
-  print $m "From: $from\n" if $from; print $m "To: $to\n"; print $m "Subject: $a{subject}\n\n$a{body}\n"; close $m; 1
+  print $m "From: $from\n" if $from;
+  print $m "To: $to\n";
+  print $m "Subject: $a{subject}\n";
+  print $m "MIME-Version: 1.0\n";
+  if ($is_html) {
+    print $m "Content-Type: text/html; charset=UTF-8\n";
+    print $m "Content-Transfer-Encoding: 8bit\n\n";
+    print $m ($a{body}//'');
+    print $m "\n";
+  } else {
+    print $m "\n".($a{body}//'')."\n";
+  }
+  close $m; 1
+}
+
+sub hero_icon_url { my($id)=@_; return '' unless defined $id && $id>=0; return $HEROES_BG[$id]||''; }
+
+sub per_hero_advantages {
+  my ($team, $enemy) = @_;
+  my @vals;
+  for my $hid (@$team) {
+    my $s = 0.0;
+    if (defined $hid && $hid>=0) {
+      for my $eid (@$enemy) { next unless defined $eid && $eid>=0; $s += -edge_adv_for($hid,$eid); }
+    }
+    push @vals, $s;
+  }
+  return \@vals;
+}
+
+sub fmt_adv { my($v)=@_; return sprintf($v>=0?'+%.2f':'%.2f', $v); }
+
+sub extract_team_names_from_match {
+  my ($m) = @_;
+  my ($A,$B) = ('','');
+  if (ref $m eq 'HASH') {
+    for my $pair (
+      ['radiantTeamName','direTeamName'],
+      ['radiant_name','dire_name'],
+      ['radiantTeam','direTeam'],
+      ['teamA','teamB'],
+      ['team1','team2'],
+    ) {
+      my ($ka,$kb)=@$pair;
+      my $va = $m->{$ka}; my $vb = $m->{$kb};
+      if (!$A && defined $va) { $A = ref $va eq 'HASH' ? ($va->{name}||$va->{shortName}||$va->{displayName}||'') : $va; }
+      if (!$B && defined $vb) { $B = ref $vb eq 'HASH' ? ($vb->{name}||$vb->{shortName}||$vb->{displayName}||'') : $vb; }
+      last if $A && $B;
+    }
+    if ((!$A || !$B) && ref $m->{teams} eq 'ARRAY' && @{$m->{teams}}>=2) {
+      my $t1 = $m->{teams}[0]; my $t2 = $m->{teams}[1];
+      $A ||= (ref $t1 eq 'HASH') ? ($t1->{name}||$t1->{shortName}||'') : '';
+      $B ||= (ref $t2 eq 'HASH') ? ($t2->{name}||$t2->{shortName}||'') : '';
+    }
+  }
+  $A ||= 'Radiant'; $B ||= 'Dire';
+  return ($A,$B);
+}
+
+sub build_email_html {
+  my ($A,$B,$teamAName,$teamBName,$diff,$url) = @_;
+  my $advA = per_hero_advantages($A,$B);
+  my $advB = per_hero_advantages($B,$A);
+  my $mk_cells = sub {
+    my ($ids,$vals) = @_;
+    my $row1 = '';
+    my $row2 = '';
+    for (my $i=0; $i<5; $i++) {
+      my $id = $ids->[$i] // -1;
+      my $src = hero_icon_url($id);
+      my $nm  = $HEROES[$id] // '';
+      my $img = $src ? sprintf('<img src="%s" alt="%s" style="width:64px;height:auto;display:block;margin:0 auto;border-radius:4px;">',$src,$nm)
+                     : '<div style="width:64px;height:36px;background:#eee;display:block;margin:0 auto;border-radius:4px;"></div>';
+      my $v  = $vals->[$i] // 0;
+      my $col = $v>=0 ? '#0a0' : '#c00';
+      $row1 .= '<td style="text-align:center;padding:6px 4px;">'.$img.'</td>';
+      $row2 .= '<td style="text-align:center;padding:0 4px 6px 4px;color:'.$col.';font:12px/14px Arial,Helvetica,sans-serif;">'.fmt_adv($v).'</td>';
+    }
+    return ($row1,$row2);
+  };
+  my ($r1a,$r2a) = $mk_cells->($A,$advA);
+  my ($r1b,$r2b) = $mk_cells->($B,$advB);
+  my $link = $url ? sprintf('<p style="margin:6px 0 0 0;"><a href="%s">Open match</a></p>', $url) : '';
+  my $html = '';
+  $html .= '<html><body style="margin:0;padding:12px 12px 16px 12px;background:#fff;">';
+  $html .= sprintf('<div style="font:16px/20px Arial,Helvetica,sans-serif;font-weight:bold;margin:0 0 6px 0;">%s vs %s</div>', $teamAName, $teamBName);
+  $html .= sprintf('<div style="font:14px/18px Arial,Helvetica,sans-serif;margin:0 0 10px 0;">Total advantage (A-B): %s</div>', fmt_adv($diff));
+  $html .= $link;
+  $html .= '<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;max-width:520px;margin-top:10px;">';
+  $html .= '<tr>';
+  $html .= '<td style="vertical-align:top;width:50%;padding-right:6px;">';
+  $html .= sprintf('<div style="font:bold 13px Arial,Helvetica,sans-serif;margin:0 0 4px 0;">%s</div>', $teamAName);
+  $html .= '<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;"><tr>'.$r1a.'</tr><tr>'.$r2a.'</tr></table>';
+  $html .= '</td>';
+  $html .= '<td style="vertical-align:top;width:50%;padding-left:6px;">';
+  $html .= sprintf('<div style="font:bold 13px Arial,Helvetica,sans-serif;margin:0 0 4px 0;">%s</div>', $teamBName);
+  $html .= '<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;"><tr>'.$r1b.'</tr><tr>'.$r2b.'</tr></table>';
+  $html .= '</td>';
+  $html .= '</tr></table>';
+  $html .= '</body></html>';
+  return $html;
 }
 
 sub load_status { my $p=local_file('.watch_status.json'); if(open my $fh,'<',$p){ local $/; my $t=<$fh>; close $fh; my $j=eval{decode_json($t||'{}')}; return $@?{}:($j||{}) } {} }
@@ -272,15 +375,11 @@ sub main_loop {
             if($wh_en && %wh){ my $ok=0; for my $hid (@a,@b){ next unless $hid>=0; my $nm=normalize_name($HEROES[$hid]||''); if($wh{$nm}){ $ok=1; last } } push @conds,$ok?1:0 }
             my $alert = (!@conds)?0:($logic eq 'all' ? ((grep{!$_}@conds)?0:1) : ((grep{$_}@conds)?1:0));
             if($alert){
-              my $to=$s->{email_to}||''; my $from=$s->{email_from}||''; my $sub=sprintf('[Dota Watcher] Hawk.live (diff=%.2f)',$diff);
-              my $namesA=join(', ', map{$HEROES[$_]}@a); my $namesB=join(', ', map{$HEROES[$_]}@b);
-              my $body=sprintf("Diff (A-B): %.4f\n\n",$diff) . "Team A: $namesA\nTeam B: $namesB\n\n";
-              $body .= "Team A base (log-odds):\n"; for my $idA (@a){ next unless defined $idA && $idA>=0 && defined $HEROES_WR[$idA]; my $wrA=0.0+$HEROES_WR[$idA]; my $baseA=logit($wrA/100.0)-logit(0.5); $body .= sprintf("  - %s: %.4f (WR %.2f%%)\n",$HEROES[$idA],$baseA,$wrA) }
-              $body .= sprintf("Team A matchups (weighted, lambda=%.2f):\n", $ADV_LAMBDA); for my $idA (@a){ next unless defined $idA && $idA>=0; my @t; my $sA=0; for my $idB (@b){ next unless defined $idB && $idB>=0; my $t=-edge_adv_for($idA,$idB); push @t, sprintf("%.2f",$t); $sA += $t } $body .= sprintf("  - %s: [%s] sum=%.2f\n", $HEROES[$idA], join(', ',@t), $sA) }
-              $body .= "\nTeam B base (log-odds):\n"; for my $idB (@b){ next unless defined $idB && $idB>=0 && defined $HEROES_WR[$idB]; my $wrB=0.0+$HEROES_WR[$idB]; my $baseB=logit($wrB/100.0)-logit(0.5); $body .= sprintf("  - %s: %.4f (WR %.2f%%)\n",$HEROES[$idB],$baseB,$wrB) }
-              $body .= sprintf("Team B matchups (weighted, lambda=%.2f):\n", $ADV_LAMBDA); for my $idB (@b){ next unless defined $idB && $idB>=0; my @tB; my $sB=0; for my $idA (@a){ next unless defined $idA && $idA>=0; my $tB=-edge_adv_for($idB,$idA); push @tB, sprintf("%.2f",$tB); $sB += $tB } $body .= sprintf("  - %s: [%s] sum=%.2f\n", $HEROES[$idB], join(', ',@tB), $sB) }
-              $body .= sprintf("\nScore A: %.2f\nScore B: %.2f\nDiff: %.2f\n", $scoreA,$scoreB,$diff);
-              if(send_email(to=>$to,from=>$from,subject=>$sub,body=>$body)){ $st->{alerts}=($st->{alerts}||0)+1; $st->{last_alert_at}=time; print STDOUT "ALERT sent (API) diff=$diff\n" } else { print STDOUT "ALERT FAILED (API) diff=$diff\n" }
+              my $to=$s->{email_to}||''; my $from=$s->{email_from}||'';
+              my ($teamAName,$teamBName) = extract_team_names_from_match($m);
+              my $sub = sprintf('%s vs %s', $teamAName, $teamBName);
+              my $html = build_email_html(\@a,\@b,$teamAName,$teamBName,$diff,'');
+              if(send_email(to=>$to,from=>$from,subject=>$sub,body=>$html,html=>1)){ $st->{alerts}=($st->{alerts}||0)+1; $st->{last_alert_at}=time; print STDOUT "ALERT sent (API) diff=$diff\n" } else { print STDOUT "ALERT FAILED (API) diff=$diff\n" }
             } else { print STDOUT sprintf("No alert (API): diff=%.2f\n", $diff); }
           }
         }
