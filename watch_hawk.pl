@@ -365,11 +365,11 @@ sub build_email_html {
   my $html = '';
   $html .= '<html><body style="margin:0;padding:12px 12px 16px 12px;background:#fff;">';
   $series_name = sanitize_series_name($series_name);
-  if ($series_name) { $html .= sprintf('<div style="font:700 18px/22px Arial,Helvetica,sans-serif;margin:0 0 8px 0;">%s</div>', $series_name); }
+  if ($series_name) { $html .= sprintf('<div style="font:700 18px/22px Arial,Helvetica,sans-serif;margin:0 0 8px 0; text-align:left;">%s</div>', $series_name); }
   $html .= '<div style="width:100%;max-width:560px;">';
-  $html .= sprintf('<div style="font:700 13px Arial,Helvetica,sans-serif;margin:8px 0 4px 0;">%s</div>', $teamAName);
+  $html .= sprintf('<div style="font:700 12px Arial,Helvetica,sans-serif;margin:8px 0 4px 0;">%s</div>', $teamAName);
   $html .= '<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;"><tr>'.$r1a.'</tr><tr>'.$r2a.'</tr></table>';
-  $html .= sprintf('<div style="font:700 13px Arial,Helvetica,sans-serif;margin:16px 0 4px 0;">%s</div>', $teamBName);
+  $html .= sprintf('<div style="font:700 12px Arial,Helvetica,sans-serif;margin:16px 0 4px 0;">%s</div>', $teamBName);
   $html .= '<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;"><tr>'.$r1b.'</tr><tr>'.$r2b.'</tr></table>';
   $html .= sprintf('<div style="text-align:center;margin:12px 0 0 0;font:700 26px/28px Arial,Helvetica,sans-serif;color:%s;">%s</div>', $diff_col, fmt_adv($diff));
   $html .= '</div>';
@@ -460,7 +460,8 @@ sub main_loop {
               $teamAName = sanitize_team_label($teamAName);
               $teamBName = sanitize_team_label($teamBName);
               my $series = extract_series_from_match($m);
-              my $sub = sprintf('%s vs %s', $teamAName, $teamBName);
+              my $sub = $series ? sprintf('%s vs %s - %s', $teamAName, $teamBName, $series)
+                                : sprintf('%s vs %s', $teamAName, $teamBName);
               my $html = build_email_html(\@a,\@b,$teamAName,$teamBName,$series);
               if(send_email(to=>$to,from=>$from,subject=>$sub,body=>$html,html=>1)){ $st->{alerts}=($st->{alerts}||0)+1; $st->{last_alert_at}=time; print STDOUT sprintf("ALERT sent (API) diff_alert=%.2f (old_diff=%.2f)\n", $diff_alert, $diff) } else { print STDOUT sprintf("ALERT FAILED (API) diff_alert=%.2f (old_diff=%.2f)\n", $diff_alert, $diff) }
             } else { print STDOUT sprintf("No alert (API): diff_alert=%.2f\n", $diff_alert); }
@@ -497,7 +498,9 @@ sub main_loop {
             $teamAName = sanitize_team_label($teamAName);
             $teamBName = sanitize_team_label($teamBName);
             my $series = extract_series_from_html($html);
-            my $sub = sprintf('%s vs %s', $teamAName, $teamBName);
+            next if $teamAName eq 'Radiant' && $teamBName eq 'Dire';
+            my $sub = $series ? sprintf('%s vs %s - %s', $teamAName, $teamBName, $series)
+                              : sprintf('%s vs %s', $teamAName, $teamBName);
             my $html_body = build_email_html($a,$b,$teamAName,$teamBName,$series);
             if(send_email(to=>$to,from=>$from,subject=>$sub,body=>$html_body,html=>1)){ $st->{alerts}=($st->{alerts}||0)+1; $st->{last_alert_at}=time; print STDOUT sprintf("ALERT sent (API) diff_alert=%.2f (old_diff=%.2f)\n", $diff_alert, $diff) } else { print STDOUT sprintf("ALERT FAILED (API) diff_alert=%.2f (old_diff=%.2f)\n", $diff_alert, $diff) }
           } else { print STDOUT sprintf("No alert (API): diff_alert=%.2f\n", $diff_alert); }
