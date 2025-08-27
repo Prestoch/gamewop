@@ -431,6 +431,7 @@ sub main_loop {
             my $tA = per_hero_totals(\@a,\@b); my $tB = per_hero_totals(\@b,\@a);
             my ($sumA2,$sumB2)=(0,0); $sumA2+=$_ for @$tA; $sumB2+=$_ for @$tB;
             my $diff_alert = $sumA2 - $sumB2;
+            print STDOUT sprintf("DEBUG: sums(A=%.2f,B=%.2f) diff_alert=%.2f ta_min=%s ta_max=%s\n", $sumA2,$sumB2,$diff_alert, (defined $ta_min?$ta_min:'-'), (defined $ta_max?$ta_max:'-')) if $DEBUG;
             my @conds; if($ta_en && (defined $ta_min || defined $ta_max)){ my $ok=0; $ok||=(defined $ta_min && $diff_alert>=$ta_min); $ok||=(defined $ta_max && $diff_alert<=$ta_max); push @conds,$ok?1:0 }
             if($ha_en && defined $ha_thr){ my $ok = any_hero_adv_threshold(\@b,$ha_cond,$ha_thr); push @conds,$ok?1:0 }
             if($wh_en && %wh){ my $ok=0; for my $hid (@a,@b){ next unless $hid>=0; my $nm=normalize_name($HEROES[$hid]||''); if($wh{$nm}){ $ok=1; last } } push @conds,$ok?1:0 }
@@ -444,7 +445,7 @@ sub main_loop {
               my $sub = sprintf('%s vs %s', $teamAName, $teamBName);
               my $html = build_email_html(\@a,\@b,$teamAName,$teamBName,$series);
               if(send_email(to=>$to,from=>$from,subject=>$sub,body=>$html,html=>1)){ $st->{alerts}=($st->{alerts}||0)+1; $st->{last_alert_at}=time; print STDOUT "ALERT sent (API) diff=$diff\n" } else { print STDOUT "ALERT FAILED (API) diff=$diff\n" }
-            } else { print STDOUT sprintf("No alert (API): diff=%.2f\n", $diff); }
+            } else { print STDOUT sprintf("No alert (API): diff_alert=%.2f\n", $diff_alert); }
           }
         }
       }
@@ -466,6 +467,7 @@ sub main_loop {
           my $tA = per_hero_totals($a,$b); my $tB = per_hero_totals($b,$a);
           my ($sumA2,$sumB2)=(0,0); $sumA2+=$_ for @$tA; $sumB2+=$_ for @$tB;
           my $diff_alert = $sumA2 - $sumB2;
+          print STDOUT sprintf("DEBUG: sums(A=%.2f,B=%.2f) diff_alert=%.2f ta_min=%s ta_max=%s\n", $sumA2,$sumB2,$diff_alert, (defined $ta_min?$ta_min:'-'), (defined $ta_max?$ta_max:'-')) if $DEBUG;
           my @conds; if($ta_en && (defined $ta_min || defined $ta_max)){ my $ok=0; $ok||=(defined $ta_min && $diff_alert>=$ta_min); $ok||=(defined $ta_max && $diff_alert<=$ta_max); push @conds,$ok?1:0 }
           if($ha_en && defined $ha_thr){ my $ok = any_hero_adv_threshold($b,$ha_cond,$ha_thr); push @conds,$ok?1:0 }
           if($wh_en && %wh){ my $ok=0; for my $hid (@$a,@$b){ next unless $hid>=0; my $nm=normalize_name($HEROES[$hid]||''); if($wh{$nm}){ $ok=1; last } } push @conds,$ok?1:0 }
@@ -479,7 +481,7 @@ sub main_loop {
             my $sub = sprintf('%s vs %s', $teamAName, $teamBName);
             my $html_body = build_email_html($a,$b,$teamAName,$teamBName,$series);
             if(send_email(to=>$to,from=>$from,subject=>$sub,body=>$html_body,html=>1)){ $st->{alerts}=($st->{alerts}||0)+1; $st->{last_alert_at}=time; print STDOUT "ALERT sent (API) diff=$diff\n" } else { print STDOUT "ALERT FAILED (API) diff=$diff\n" }
-          } else { print STDOUT sprintf("No alert (API): diff=%.2f\n", $diff); }
+          } else { print STDOUT sprintf("No alert (API): diff_alert=%.2f\n", $diff_alert); }
         }
       }
     }
