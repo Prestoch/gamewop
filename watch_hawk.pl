@@ -252,9 +252,15 @@ sub send_email {
   my $to=$a{to}||''; return 0 unless $to; my $from=$a{from}||'';
   my $is_html = $a{html} ? 1 : 0;
   my $sm='/usr/sbin/sendmail'; return 0 unless -x $sm;
-  my $cmd = $from ? "$sm -t -f $from" : "$sm -t";
+  my $env_from = $ENV{WATCH_FROM} // '';
+  my $from_addr = $from || $env_from;
+  my $debug_mail = $ENV{WATCH_MAIL_DEBUG} ? 1 : 0;
+  my $cmd;
+  if ($from_addr) { $cmd = $debug_mail ? "$sm -t -v -f $from_addr" : "$sm -t -f $from_addr"; }
+  else { $cmd = $debug_mail ? "$sm -t -v" : "$sm -t"; }
+  print STDOUT sprintf("MAIL enqueue: to=%s from=%s debug=%d\n", $to, ($from_addr||'(none)'), $debug_mail);
   my $pid = open(my $m,'|-',$cmd) or return 0;
-  print $m "From: $from\n" if $from;
+  print $m "From: $from_addr\n" if $from_addr;
   print $m "To: $to\n";
   print $m "Subject: $a{subject}\n";
   print $m "MIME-Version: 1.0\n";
