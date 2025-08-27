@@ -370,11 +370,11 @@ sub build_email_html {
   my $html = '';
   $html .= '<html><body style="margin:0;padding:12px 12px 16px 12px;background:#fff;">';
   $series_name = sanitize_series_name($series_name);
-  if ($series_name) { $html .= sprintf('<div style="font:700 18px/22px Arial,Helvetica,sans-serif;margin:0 0 8px 0; text-align:left;">%s</div>', sanitize_series_name($series_name)); }
+  if ($series_name) { $html .= sprintf('<div style="font:700 12px/16px Arial,Helvetica,sans-serif;margin:0 0 8px 0; text-align:left;">%s</div>', sanitize_series_name($series_name)); }
   $html .= '<div style="width:100%;max-width:560px;">';
-  $html .= sprintf('<div style="font:700 12px Arial,Helvetica,sans-serif;margin:8px 0 4px 0;">%s</div>', $teamAName);
+  $html .= sprintf('<div style="font:700 14px Arial,Helvetica,sans-serif;margin:8px 0 4px 0;">%s</div>', $teamAName);
   $html .= '<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;"><tr>'.$r1a.'</tr><tr>'.$r2a.'</tr></table>';
-  $html .= sprintf('<div style="font:700 12px Arial,Helvetica,sans-serif;margin:16px 0 4px 0;">%s</div>', $teamBName);
+  $html .= sprintf('<div style="font:700 14px Arial,Helvetica,sans-serif;margin:16px 0 4px 0;">%s</div>', $teamBName);
   $html .= '<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;"><tr>'.$r1b.'</tr><tr>'.$r2b.'</tr></table>';
   $html .= sprintf('<div style="text-align:center;margin:12px 0 0 0;font:700 26px/28px Arial,Helvetica,sans-serif;color:%s;">%s</div>', $diff_col, fmt_adv($diff));
   $html .= '</div>';
