@@ -9,7 +9,7 @@
 
 use strict;
 use warnings;
-use JSON::PP qw(decode_json);
+use JSON::PP qw(decode_json encode_json);
 use POSIX qw/strftime/;
 use HTTP::Tiny;
 
@@ -276,10 +276,73 @@ sub get_dotabuff_counters_for_hero {
 sub get_winrates_dotabuff {
   my $total = scalar @heroes;
   warn "Fetching matchups for $total heroes\n";
-  for (my $i = 0; $i < $total; $i++) {
-    warn sprintf("[matchups %3d/%3d] %-20s\n", $i+1, $total, $heroes[$i]);
-    get_dotabuff_counters_for_hero ($i);
+  my $CONCURRENCY = $ENV{GEN_CONCURRENCY} ? 0 + $ENV{GEN_CONCURRENCY} : 4;
+  $CONCURRENCY = 1 if $CONCURRENCY < 1;
+  if ($CONCURRENCY == 1) {
+    for (my $i = 0; $i < $total; $i++) {
+      warn sprintf("[matchups %3d/%3d] %-20s\n", $i+1, $total, $heroes[$i]);
+      get_dotabuff_counters_for_hero ($i);
+    }
+    return;
   }
+
+  my $tmpdir = ".dotabuff_tmp_$$";
+  mkdir $tmpdir;
+
+  my $chunk = int(($total + $CONCURRENCY - 1) / $CONCURRENCY);
+  my @pids;
+  for (my $w = 0; $w < $CONCURRENCY; $w++) {
+    my $start = $w * $chunk;
+    my $end   = $start + $chunk - 1;
+    $end = $total - 1 if $end >= $total;
+    next if $start > $end;
+
+    my $pid = fork();
+    if (!defined $pid) { warn "fork() failed"; next; }
+    if ($pid == 0) {
+      # child
+      for (my $i = $start; $i <= $end; $i++) {
+        warn sprintf("[matchups %3d/%3d] %-20s (worker %d/%d)\n", $i+1, $total, $heroes[$i], $w+1, $CONCURRENCY);
+        get_dotabuff_counters_for_hero($i);
+        # write per-hero row
+        my $out = {
+          idx => $i,
+          wr  => $heroes_wr[$i],
+          row => $win_rates[$i] || [],
+        };
+        if (open my $fh, '>', "$tmpdir/h_$i.json") {
+          print $fh encode_json($out);
+          close $fh;
+        }
+      }
+      exit 0;
+    } else {
+      push @pids, $pid;
+    }
+  }
+
+  # wait for children
+  for my $pid (@pids) { waitpid($pid, 0); }
+
+  # merge results
+  opendir(my $dh, $tmpdir);
+  while (my $f = readdir($dh)) {
+    next unless $f =~ /^h_(\d+)\.json$/;
+    my $i = 0 + $1;
+    my $path = "$tmpdir/$f";
+    if (open my $fh, '<', $path) {
+      local $/; my $txt = <$fh>; close $fh;
+      my $j; eval { $j = decode_json($txt) };
+      if (!$@ && $j && defined $j->{idx}) {
+        my $idx = 0 + $j->{idx};
+        $heroes_wr[$idx] = $j->{wr} if defined $j->{wr};
+        $win_rates[$idx] = $j->{row} if defined $j->{row};
+      }
+    }
+    unlink $path;
+  }
+  closedir($dh);
+  rmdir $tmpdir;
 }
 
 
