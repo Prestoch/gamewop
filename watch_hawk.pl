@@ -244,6 +244,19 @@ sub per_hero_advantages {
   return \@vals;
 }
 
+sub per_hero_totals {
+  my ($team, $enemy) = @_;
+  my @vals;
+  for my $hid (@$team) {
+    my $base = 0.0;
+    if (defined $hid && $hid>=0 && defined $HEROES_WR[$hid]) { my $wr=0.0+$HEROES_WR[$hid]; $base = (logit($wr/100.0) - logit(0.5)); }
+    my $sum  = 0.0;
+    if (defined $hid && $hid>=0) { for my $eid (@$enemy) { next unless defined $eid && $eid>=0; $sum += -edge_adv_for($hid,$eid); } }
+    push @vals, ($base + $sum);
+  }
+  return \@vals;
+}
+
 sub fmt_adv { my($v)=@_; return sprintf($v>=0?'+%.2f':'%.2f', $v); }
 
 sub extract_team_names_from_match {
@@ -274,9 +287,9 @@ sub extract_team_names_from_match {
 }
 
 sub build_email_html {
-  my ($A,$B,$teamAName,$teamBName,$diff,$url) = @_;
-  my $advA = per_hero_advantages($A,$B);
-  my $advB = per_hero_advantages($B,$A);
+  my ($A,$B,$teamAName,$teamBName,$diff_unused,$url) = @_;
+  my $totA = per_hero_totals($A,$B);
+  my $totB = per_hero_totals($B,$A);
   my $mk_cells = sub {
     my ($ids,$vals) = @_;
     my $row1 = '';
@@ -285,34 +298,33 @@ sub build_email_html {
       my $id = $ids->[$i] // -1;
       my $src = hero_icon_url($id);
       my $nm  = $HEROES[$id] // '';
-      my $img = $src ? sprintf('<img src="%s" alt="%s" style="width:64px;height:auto;display:block;margin:0 auto;border-radius:4px;">',$src,$nm)
-                     : '<div style="width:64px;height:36px;background:#eee;display:block;margin:0 auto;border-radius:4px;"></div>';
+      my $img = $src ? sprintf('<img src="%s" alt="%s" style="width:96px;height:auto;display:block;margin:0 auto;border-radius:6px;">',$src,$nm)
+                     : '<div style="width:96px;height:54px;background:#eee;display:block;margin:0 auto;border-radius:6px;"></div>';
       my $v  = $vals->[$i] // 0;
       my $col = $v>=0 ? '#0a0' : '#c00';
-      $row1 .= '<td style="text-align:center;padding:6px 4px;">'.$img.'</td>';
-      $row2 .= '<td style="text-align:center;padding:0 4px 6px 4px;color:'.$col.';font:12px/14px Arial,Helvetica,sans-serif;">'.fmt_adv($v).'</td>';
+      $row1 .= '<td style="text-align:center;padding:8px 6px;">'.$img.'</td>';
+      $row2 .= '<td style="text-align:center;padding:0 6px 10px 6px;color:'.$col.';font:14px/16px Arial,Helvetica,sans-serif;">'.fmt_adv($v).'</td>';
     }
     return ($row1,$row2);
   };
-  my ($r1a,$r2a) = $mk_cells->($A,$advA);
-  my ($r1b,$r2b) = $mk_cells->($B,$advB);
-  my $link = $url ? sprintf('<p style="margin:6px 0 0 0;"><a href="%s">Open match</a></p>', $url) : '';
+  my ($r1a,$r2a) = $mk_cells->($A,$totA);
+  my ($r1b,$r2b) = $mk_cells->($B,$totB);
+  my $sumA = 0; $sumA += $_ for @$totA;
+  my $sumB = 0; $sumB += $_ for @$totB;
+  my $diff = $sumA - $sumB;
+  my $diff_col = $diff>=0 ? '#0a0' : '#c00';
+  my $link = $url ? sprintf('<p style="margin:8px 0 0 0;"><a href="%s">Open match</a></p>', $url) : '';
   my $html = '';
   $html .= '<html><body style="margin:0;padding:12px 12px 16px 12px;background:#fff;">';
-  $html .= sprintf('<div style="font:16px/20px Arial,Helvetica,sans-serif;font-weight:bold;margin:0 0 6px 0;">%s vs %s</div>', $teamAName, $teamBName);
-  $html .= sprintf('<div style="font:14px/18px Arial,Helvetica,sans-serif;margin:0 0 10px 0;">Total advantage (A-B): %s</div>', fmt_adv($diff));
+  $html .= sprintf('<div style="font:16px/20px Arial,Helvetica,sans-serif;font-weight:bold;margin:0 0 8px 0;">%s vs %s</div>', $teamAName, $teamBName);
   $html .= $link;
-  $html .= '<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;max-width:520px;margin-top:10px;">';
-  $html .= '<tr>';
-  $html .= '<td style="vertical-align:top;width:50%;padding-right:6px;">';
-  $html .= sprintf('<div style="font:bold 13px Arial,Helvetica,sans-serif;margin:0 0 4px 0;">%s</div>', $teamAName);
+  $html .= '<div style="width:100%;max-width:560px;">';
+  $html .= sprintf('<div style="font:bold 13px Arial,Helvetica,sans-serif;margin:8px 0 4px 0;">%s</div>', $teamAName);
   $html .= '<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;"><tr>'.$r1a.'</tr><tr>'.$r2a.'</tr></table>';
-  $html .= '</td>';
-  $html .= '<td style="vertical-align:top;width:50%;padding-left:6px;">';
-  $html .= sprintf('<div style="font:bold 13px Arial,Helvetica,sans-serif;margin:0 0 4px 0;">%s</div>', $teamBName);
+  $html .= sprintf('<div style="font:bold 13px Arial,Helvetica,sans-serif;margin:16px 0 4px 0;">%s</div>', $teamBName);
   $html .= '<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;"><tr>'.$r1b.'</tr><tr>'.$r2b.'</tr></table>';
-  $html .= '</td>';
-  $html .= '</tr></table>';
+  $html .= sprintf('<div style="text-align:center;margin:12px 0 0 0;font:700 26px/28px Arial,Helvetica,sans-serif;color:%s;">Total advantage (A-B): %s</div>', $diff_col, fmt_adv($diff));
+  $html .= '</div>';
   $html .= '</body></html>';
   return $html;
 }
