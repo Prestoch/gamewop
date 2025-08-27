@@ -22,6 +22,7 @@ my $DEBUG            = $ENV{WATCH_DEBUG} ? 1 : 0;
 
 my $HAWK_BASE = $ENV{HAWK_BASE} // 'https://hawk.live';
 my @HAWK_LIVE_PATHS = split /\s*,\s*/, ($ENV{HAWK_PATHS} // '/, /dota2, /dota-2, /en, /en/dota2');
+my $HAWK_API_CACHE = local_file('.hawk_endpoint');
 
 my $http = HTTP::Tiny->new(
   agent  => 'Mozilla/5.0 (X11; Linux x86_64) Safari/537.36 Perl-HTTP::Tiny',
@@ -61,6 +62,49 @@ sub fetch_html {
   $html = ($http->get($url))->{content} unless $html;
   $html //= '';
   $html =~ s/\r//g; return $html;
+}
+
+# ---- Optional JSON discovery ----
+sub discover_app_bundle {
+  my $root = fetch_html(url_cat($HAWK_BASE,'/'));
+  return '' unless $root;
+  my ($bundle) = $root =~ m{build/assets/(app-[A-Za-z0-9]+\.js)}i;
+  return $bundle || '';
+}
+
+sub fetch_asset {
+  my ($path) = @_;
+  my $url = url_cat($HAWK_BASE, "/build/assets/$path");
+  my $res = $http->get($url);
+  return ($res->{success} ? ($res->{content}||'') : '');
+}
+
+sub discover_hawk_endpoints {
+  # cache
+  if (open my $rf,'<',$HAWK_API_CACHE){ my $u=<$rf>; close $rf; $u =~ s/\s+//g; return [$u] if $u; }
+  my $bundle = discover_app_bundle();
+  return [] unless $bundle;
+  my $js = fetch_asset($bundle);
+  return [] unless $js;
+  my %seen; my @candidates;
+  while ($js =~ m{https?://[^"'\)\s]+}g) {
+    my $u = $&;
+    next unless $u =~ /(api|match|live)/i;
+    next if $seen{$u}++;
+    push @candidates, $u;
+  }
+  while ($js =~ m{['"](/[^'"\)\s]+)['"]}g) {
+    my $p=$1; next unless $p =~ /(^\/api|match|live)/i; my $u=url_cat($HAWK_BASE,$p);
+    next if $seen{$u}++; push @candidates,$u;
+  }
+  if (@candidates){ if (open my $wf,'>',$HAWK_API_CACHE){ print $wf $candidates[0]; close $wf; } }
+  return \@candidates;
+}
+
+sub fetch_json {
+  my ($url)=@_; my $res=$http->get($url, { headers => { 'Accept'=>'application/json' } });
+  return undef unless $res->{success} && $res->{content};
+  my $d=eval{ decode_json($res->{content}) }; return $@ ? undef : $d;
 }
 
 # ----- Load settings / cs.json -----
