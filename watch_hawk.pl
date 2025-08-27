@@ -194,6 +194,19 @@ sub extract_picks_from_html {
   return (\@a,\@b);
 }
 
+sub extract_team_names_from_html {
+  my ($html) = @_;
+  my ($A,$B)=('','');
+  if ($html =~ m{<meta[^>]+property\s*=\s*"og:title"[^>]+content\s*=\s*"([^"]+)"}i) {
+    my $t=$1; $t =~ s/\s+/ /g; $t =~ s/^\s+|\s+$//g; if ($t =~ /(.*?)\s+vs\s+(.*)/i) { ($A,$B)=($1,$2); }
+  }
+  if ((!$A || !$B) && $html =~ m{<title[^>]*>([^<]+)</title>}i) {
+    my $t=$1; $t =~ s/\s+/ /g; $t =~ s/^\s+|\s+$//g; if ($t =~ /(.*?)\s+vs\s+(.*)/i) { ($A,$B)=($1,$2); }
+  }
+  $A ||= 'Radiant'; $B ||= 'Dire';
+  return ($A,$B);
+}
+
 sub send_email {
   my (%a)=@_;
   my $to=$a{to}||''; return 0 unless $to; my $from=$a{from}||'';
@@ -404,20 +417,11 @@ sub main_loop {
           if($wh_en && %wh){ my $ok=0; for my $hid (@$a,@$b){ next unless $hid>=0; my $nm=normalize_name($HEROES[$hid]||''); if($wh{$nm}){ $ok=1; last } } push @conds,$ok?1:0 }
           my $alert = (!@conds) ? 0 : ($logic eq 'all' ? ((grep{!$_}@conds)?0:1) : ((grep{$_}@conds)?1:0));
           if($alert){
-            my $to=$s->{email_to}||''; my $from=$s->{email_from}||''; my $sub=sprintf('[Dota Watcher] Hawk.live (diff=%.2f)',$diff);
-            my $namesA=join(', ', map{$HEROES[$_]}@$a); my $namesB=join(', ', map{$HEROES[$_]}@$b);
-            my $body="Match: $u\n" . sprintf("Diff (A-B): %.4f\n\n",$diff);
-            $body .= "Team A: $namesA\nTeam B: $namesB\n\n";
-            $body .= "Team A base (log-odds):\n";
-            for my $idA (@$a){ next unless defined $idA && $idA>=0 && defined $HEROES_WR[$idA]; my $wrA=0.0+$HEROES_WR[$idA]; my $baseA=logit($wrA/100.0)-logit(0.5); $body .= sprintf("  - %s: %.4f (WR %.2f%%)\n",$HEROES[$idA],$baseA,$wrA) }
-            $body .= sprintf("Team A matchups (weighted, lambda=%.2f):\n", $ADV_LAMBDA);
-            for my $idA (@$a){ next unless defined $idA && $idA>=0; my @t; my $sA=0; for my $idB (@$b){ next unless defined $idB && $idB>=0; my $t=-edge_adv_for($idA,$idB); push @t, sprintf("%.2f",$t); $sA += $t } $body .= sprintf("  - %s: [%s] sum=%.2f\n", $HEROES[$idA], join(', ',@t), $sA) }
-            $body .= "\nTeam B base (log-odds):\n";
-            for my $idB (@$b){ next unless defined $idB && $idB>=0 && defined $HEROES_WR[$idB]; my $wrB=0.0+$HEROES_WR[$idB]; my $baseB=logit($wrB/100.0)-logit(0.5); $body .= sprintf("  - %s: %.4f (WR %.2f%%)\n",$HEROES[$idB],$baseB,$wrB) }
-            $body .= sprintf("Team B matchups (weighted, lambda=%.2f):\n", $ADV_LAMBDA);
-            for my $idB (@$b){ next unless defined $idB && $idB>=0; my @tB; my $sB=0; for my $idA (@$a){ next unless defined $idA && $idA>=0; my $tB=-edge_adv_for($idB,$idA); push @tB, sprintf("%.2f",$tB); $sB += $tB } $body .= sprintf("  - %s: [%s] sum=%.2f\n", $HEROES[$idB], join(', ',@tB), $sB) }
-            $body .= sprintf("\nScore A: %.2f\nScore B: %.2f\nDiff: %.2f\n", team_score($a,$b), team_score($b,$a), $diff);
-            if(send_email(to=>$to,from=>$from,subject=>$sub,body=>$body)){ $st->{alerts}=($st->{alerts}||0)+1; $st->{last_alert_at}=time; print STDOUT "ALERT sent (API) diff=$diff\n" } else { print STDOUT "ALERT FAILED (API) diff=$diff\n" }
+            my $to=$s->{email_to}||''; my $from=$s->{email_from}||'';
+            my ($teamAName,$teamBName) = extract_team_names_from_html($html);
+            my $sub = sprintf('%s vs %s', $teamAName, $teamBName);
+            my $html_body = build_email_html($a,$b,$teamAName,$teamBName,$diff,$u);
+            if(send_email(to=>$to,from=>$from,subject=>$sub,body=>$html_body,html=>1)){ $st->{alerts}=($st->{alerts}||0)+1; $st->{last_alert_at}=time; print STDOUT "ALERT sent (API) diff=$diff\n" } else { print STDOUT "ALERT FAILED (API) diff=$diff\n" }
           } else { print STDOUT sprintf("No alert (API): diff=%.2f\n", $diff); }
         }
       }
