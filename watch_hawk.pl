@@ -277,6 +277,66 @@ sub extract_picks_from_html {
   return (\@a,\@b);
 }
 
+# ----- JSON-from-HTML helpers -----
+sub _extract_braced {
+  my ($src, $start_pos, $open, $close) = @_;
+  my $len = length($src); my $depth=0; my $in_str=0; my $esc=0; my $end=-1;
+  for (my $i=$start_pos; $i<$len; $i++) {
+    my $ch = substr($src,$i,1);
+    if ($in_str) { if ($esc){ $esc=0; next; } if ($ch eq '\\'){ $esc=1; next; } if ($ch eq '"'){ $in_str=0; next; } next; }
+    else {
+      if ($ch eq '"'){ $in_str=1; next; }
+      if ($ch eq $open){ $depth++; next; }
+      if ($ch eq $close){ $depth--; if($depth==0){ $end=$i; last; } next; }
+    }
+  }
+  return '' if $end < 0; return substr($src, $start_pos, $end-$start_pos+1);
+}
+
+sub extract_json_candidates_from_html {
+  my ($html) = @_;
+  my @objs;
+  # 1) window.__NUXT__=
+  if ($html =~ /window\.__NUXT__\s*=\s*\{/i){ my $p=index($html,'{',$-[0]); my $txt=_extract_braced($html,$p,'{','}'); if($txt){ my $o=eval{ decode_json($txt) }; push @objs,$o if $o && !$@; } }
+  # 2) __NEXT_DATA__
+  while ($html =~ m{<script[^>]+id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)</script>}ig){ my $txt=$1; $txt =~ s/^\s+|\s+$//g; my $o=eval{ decode_json($txt) }; push @objs,$o if $o && !$@; }
+  # 3) application/json scripts
+  while ($html =~ m{<script[^>]+type=["']application/json["'][^>]*>([\s\S]*?)</script>}ig){ my $txt=$1; $txt =~ s/^\s+|\s+$//g; my $o=eval{ decode_json($txt) }; push @objs,$o if $o && !$@; }
+  # 4) Generic: search for first big object that mentions picks/heroes
+  if ($html =~ /(picks?|heroes?)/i){
+    my $pos = index(lc($html),'pick'); $pos = index(lc($html),'hero') if $pos<0;
+    if ($pos>=0){ my $p = index($html,'{',$pos); if($p>=0){ my $txt=_extract_braced($html,$p,'{','}'); if($txt){ my $o=eval{ decode_json($txt) }; push @objs,$o if $o && !$@; } } }
+  }
+  return \@objs;
+}
+
+sub extract_picks_from_jsonish {
+  my ($obj) = @_;
+  my (@a,@b);
+  my $try_list = [];
+  if (ref $obj eq 'ARRAY'){ $try_list = $obj; }
+  elsif (ref $obj eq 'HASH'){
+    $try_list = find_match_array_in_hash($obj);
+  }
+  if (ref $try_list eq 'ARRAY' && @$try_list){
+    for my $e (@$try_list){
+      next unless ref $e eq 'HASH';
+      my $isPick = defined $e->{isPick} ? ($e->{isPick}?1:0) : 1;
+      next unless $isPick;
+      my $isRad = ($e->{isRadiant}||$e->{radiant}||$e->{team}&&lc($e->{team})eq'radiant') ? 1 : 0;
+      my $name = '';
+      if (ref $e->{hero} eq 'HASH') { $name = $e->{hero}{displayName} // $e->{hero}{name} // $e->{hero}{shortName} // ''; }
+      $name ||= $e->{heroName} // $e->{name} // $e->{hero_name} // $e->{heroSlug} // $e->{slug} // '';
+      my $idx = $name ? hero_index_by_name($name) : -1;
+      next unless $idx>=0;
+      if ($isRad) { push @a,$idx; } else { push @b,$idx; }
+    }
+  }
+  @a=@a[0..4] if @a>5; @b=@b[0..4] if @b>5;
+  return (\@a,\@b) if @a+@b>=2;
+  return ([],[]);
+}
+
 sub extract_team_names_from_html {
   my ($html) = @_;
   my ($A,$B)=('','');
@@ -583,8 +643,14 @@ sub main_loop {
         for my $u (@all_urls){
           $checked++;
           print STDOUT "DEBUG: fetch match -> $u\n" if $DEBUG;
-          my $html = fetch_html($u); next unless $html && $html =~ /hero|pick|draft|Radiant|Dire|background-image|data-hero/i;
-          my ($a,$b) = extract_picks_from_html($html); next unless $a && $b && (@$a+@$b)>=2;
+          my $html = fetch_html($u); next unless $html;
+          my ($a,$b) = extract_picks_from_html($html);
+          if ((!$a || !$b || (@$a+@$b)<2)){
+            my $objs = extract_json_candidates_from_html($html);
+            if ($DEBUG) { print STDOUT sprintf("DEBUG: page json candidates=%d\n", scalar(@$objs)); }
+            for my $o (@$objs){ my ($aa,$bb) = extract_picks_from_jsonish($o); if (($aa&&$bb) && (@$aa+@$bb)>=2){ ($a,$b)=($aa,$bb); last; } }
+          }
+          next unless $a && $b && (@$a+@$b)>=2;
           my ($mid) = $u =~ m{/(\d+)(?:/|$)}; $mid ||= '';
           my $key = ($mid ? ($mid.'#') : '') . join(',',@$a).'|'.join(',',@$b); next if $seen{$key}++;
           $found++;
