@@ -268,6 +268,9 @@ sub extract_picks_from_html {
   for my $n (@names){ my $idx=hero_index_by_name($n); push @ids,$idx if $idx>=0; }
   my @uniq; my %seen;
   for my $id (@ids){ next if $seen{$id}++; push @uniq,$id; last if @uniq>=10; }
+  if ($DEBUG) {
+    print STDOUT sprintf("DEBUG: pick-parse names=%d ids=%d uniq=%d\n", scalar(@names), scalar(@ids), scalar(@uniq));
+  }
   return ([],[]) unless @uniq>=2;
   my @a=@uniq[0..(($#uniq>=4)?4:$#uniq)];
   my @b=@uniq[(($#uniq>=5)?5:scalar(@uniq))..(($#uniq>=9)?9:$#uniq)];
