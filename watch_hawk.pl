@@ -81,16 +81,18 @@ sub fetch_html {
 }
 
 # ---- Optional JSON discovery ----
-sub discover_app_bundle {
+sub discover_app_bundles {
   print STDOUT "DEBUG: discovering Hawk endpoints from root $HAWK_BASE/\n" if $DEBUG;
   my $root = fetch_html(url_cat($HAWK_BASE,'/'));
-  return '' unless $root;
-  # Prefer script src entries if present
-  my ($bundle) = $root =~ m{<script[^>]+src=["']/build/assets/([^"']+?\.js)["']}i;
-  $bundle ||= ($root =~ m{build/assets/([A-Za-z0-9_.-]*app[-_][A-Za-z0-9_.-]*\.js)}i)[0];
-  $bundle ||= ($root =~ m{build/assets/([A-Za-z0-9_.-]*main[-_][A-Za-z0-9_.-]*\.js)}i)[0];
-  $bundle ||= ($root =~ m{build/assets/([A-Za-z0-9_.-]*index[-_][A-Za-z0-9_.-]*\.js)}i)[0];
-  return $bundle || '';
+  return [] unless $root;
+  my %seen; my @bundles;
+  while ($root =~ m{<script[^>]+src=["']/build/assets/([^"']+?\.js)["']}ig) { my $b=$1; next if $seen{$b}++; push @bundles,$b; }
+  while ($root =~ m{<link[^>]+rel=["']modulepreload["'][^>]+href=["']/build/assets/([^"']+?\.js)["']}ig) { my $b=$1; next if $seen{$b}++; push @bundles,$b; }
+  for my $pat (qw/app main index vendor vendors chunk runtime/) {
+    my ($b) = $root =~ m{build/assets/([A-Za-z0-9_.-]*$pat[-_][A-Za-z0-9_.-]*\.js)}i; if ($b && !$seen{$b}++){ push @bundles,$b }
+  }
+  print STDOUT sprintf("DEBUG: found %d bundles\n", scalar(@bundles)) if $DEBUG;
+  return \@bundles;
 }
 
 sub fetch_asset {
@@ -108,26 +110,29 @@ sub fetch_asset {
 
 sub discover_hawk_endpoints {
   my %seen; my @candidates;
-  # use cached primary if present
   if (open my $rf,'<',$HAWK_API_CACHE){ my $u=<$rf>; close $rf; $u =~ s/\s+//g; if ($u){ $seen{$u}=1; push @candidates,$u; print STDOUT "DEBUG: using cached endpoint $u\n" if $DEBUG; } }
-  # also try discovery every poll to avoid stale cache
-  my $bundle = discover_app_bundle();
-  if ($bundle) {
-    my $js = fetch_asset($bundle);
-    if ($js) {
+  my $bundles = discover_app_bundles();
+  if ($bundles && @$bundles){
+    BUNDLE:
+    for my $bundle (@$bundles){
+      my $js = fetch_asset($bundle); next unless $js;
+      # Extract absolute URLs limited to hawk.live domain
       while ($js =~ m{https?://[^"'\)\s]+}g) {
-        my $u = $&; next unless $u =~ /(api|match|live)/i; next if $seen{$u}++; push @candidates, $u;
+        my $u = $&; next unless $u =~ m{^https?://([A-Za-z0-9.-]*\.)?hawk\.live(?::\d+)?/}i; next unless $u =~ /(api|graphql|match|live)/i; next if $seen{$u}++; push @candidates, $u;
       }
+      # Extract relative API-like paths
       while ($js =~ m{['"](/[^'"\)\s]+)['"]}g) {
-        my $p=$1; next unless $p =~ /(^\/api|match|live)/i; my $u=url_cat($HAWK_BASE,$p); next if $seen{$u}++; push @candidates,$u;
+        my $p=$1; next unless $p =~ m{^/(api|graphql|en/.*api|ru/.*api|.*match|.*live)}i; my $u=url_cat($HAWK_BASE,$p); next if $seen{$u}++; push @candidates,$u;
       }
-    } else { print STDOUT "DEBUG: failed to fetch bundle $bundle\n" if $DEBUG; }
-  } else { print STDOUT "DEBUG: no app bundle found on root; endpoints discovery limited to cache\n" if $DEBUG; }
+      last BUNDLE if @candidates;
+    }
+  } else { print STDOUT "DEBUG: no app bundles found; discovery limited to cache\n" if $DEBUG; }
+  # Filter out obvious non-API and malformed entries
+  @candidates = grep { $_ !~ m{</a>} && $_ !~ m{^https?://[^/]+/$} && $_ !~ m{primebrand\.site}i } @candidates;
   print STDOUT sprintf("DEBUG: candidate endpoints: %s\n", join(', ', @candidates)) if $DEBUG && @candidates;
-  # Keep only API-like URLs in cache; avoid caching the site root
   if (@candidates){
     my $primary = $candidates[0];
-    if ($primary =~ /api|live|match/i && $primary !~ m{^https?://[^/]+/$}){
+    if ($primary =~ /(api|live|match)/i && $primary !~ m{^https?://[^/]+/$}){
       if (open my $wf,'>',$HAWK_API_CACHE){ print $wf $primary; close $wf; }
     }
   }
@@ -538,6 +543,14 @@ sub main_loop {
         my $u=url_cat($HAWK_BASE,$p);
         print STDOUT "DEBUG: fetch root -> $u\n" if $DEBUG;
         $live_html = fetch_html($u);
+        if ($live_html && $live_html =~ /(match|live|dota)/i){ last; }
+        # try alternative language prefixes
+        for my $lang (qw/en ru/){
+          my $v=url_cat($HAWK_BASE, $p =~ m{^/} ? "/$lang".$p : "/$lang/$p");
+          print STDOUT "DEBUG: fetch root -> $v\n" if $DEBUG;
+          $live_html = fetch_html($v);
+          last if $live_html && $live_html =~ /(match|live|dota)/i;
+        }
         last if $live_html && $live_html =~ /(match|live|dota)/i;
       }
       if ($live_html) {
