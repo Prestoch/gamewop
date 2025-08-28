@@ -56,7 +56,7 @@ sub flare_get_html {
 sub scrapedo_get_html {
   my ($url) = @_;
   return '' unless $SCRAPEDO_API_KEY;
-  my $api_url = $SCRAPEDO_ENDPOINT . '?token=' . url_encode($SCRAPEDO_API_KEY) . '&url=' . url_encode($url) . ($SCRAPEDO_RENDER ? '&render=true' : '');
+  my $api_url = $SCRAPEDO_ENDPOINT . '?token=' . url_encode($SCRAPEDO_API_KEY) . '&url=' . url_encode($url) . ($SCRAPEDO_RENDER ? '&render=true&device=desktop&country=US&timeout=20000&wait_until=domcontentloaded' : '');
   my $res = $http->get($api_url, { headers => { 'Accept-Encoding' => 'identity' } });
   return $res->{success} ? ($res->{content}||'') : '';
 }
