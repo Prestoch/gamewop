@@ -28,6 +28,7 @@ my $HAWK_BASE = $ENV{HAWK_BASE} // 'https://hawk.live';
 my @HAWK_LIVE_PATHS = split /\s*,\s*/, (
   $ENV{HAWK_PATHS} // '/, /dota2, /dota-2, /en, /en/dota2, /en/dota-2, /en/dota-2/matches, /dota-2/matches, /dota2/matches, /en/dota2/matches, /dota-2/live, /en/dota-2/live, /dota2/live, /en/dota2/live'
 );
+my @HAWK_MATCH_URLS = $ENV{HAWK_MATCH_URLS} ? split(/\s*,\s*/, $ENV{HAWK_MATCH_URLS}) : ();
 my $HAWK_API_CACHE = local_file('.hawk_endpoint');
 
 my $http = HTTP::Tiny->new(
@@ -544,6 +545,8 @@ sub main_loop {
     if (!$handled) {
       print STDOUT "DEBUG: no JSON handled; falling back to HTML\n" if $DEBUG;
       my %seen_url; my @all_urls;
+      # Add direct match URLs from env if provided
+      for my $u (@HAWK_MATCH_URLS){ next unless defined $u && length $u; $u =~ s/^\s+|\s+$//g; next if $seen_url{$u}++; push @all_urls, $u; }
       for my $p (@HAWK_LIVE_PATHS){
         my @variants; push @variants, url_cat($HAWK_BASE,$p);
         for my $lang (qw/en ru/){ push @variants, url_cat($HAWK_BASE, $p =~ m{^/} ? "/$lang".$p : "/$lang/$p"); }
