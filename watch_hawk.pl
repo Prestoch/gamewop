@@ -54,6 +54,16 @@ sub scrapedo_get_html {
   return $res->{success} ? ($res->{content}||'') : '';
 }
 
+sub scrapedo_get_json {
+  my ($url) = @_;
+  return undef unless $SCRAPEDO_API_KEY;
+  my $api_url = $SCRAPEDO_ENDPOINT . '?token=' . url_encode($SCRAPEDO_API_KEY) . '&url=' . url_encode($url);
+  my $res = $http->get($api_url, { headers => { 'Accept' => 'application/json' } });
+  return undef unless $res->{success} && $res->{content};
+  my $d = eval { decode_json($res->{content}) };
+  return $@ ? undef : $d;
+}
+
 sub fetch_html {
   my ($url) = @_;
   my $html = '';
@@ -75,6 +85,10 @@ sub discover_app_bundle {
 sub fetch_asset {
   my ($path) = @_;
   my $url = url_cat($HAWK_BASE, "/build/assets/$path");
+  if ($SCRAPEDO_API_KEY) {
+    my $html = scrapedo_get_html($url);
+    return $html if defined $html && length $html;
+  }
   my $res = $http->get($url);
   return ($res->{success} ? ($res->{content}||'') : '');
 }
@@ -102,7 +116,12 @@ sub discover_hawk_endpoints {
 }
 
 sub fetch_json {
-  my ($url)=@_; my $res=$http->get($url, { headers => { 'Accept'=>'application/json' } });
+  my ($url)=@_;
+  if ($SCRAPEDO_API_KEY) {
+    my $dj = scrapedo_get_json($url);
+    return $dj if $dj;
+  }
+  my $res=$http->get($url, { headers => { 'Accept'=>'application/json' } });
   return undef unless $res->{success} && $res->{content};
   my $d=eval{ decode_json($res->{content}) }; return $@ ? undef : $d;
 }
