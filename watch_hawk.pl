@@ -13,11 +13,15 @@ use File::Spec;
 my $BASE_DIR = dirname(abs_path($0));
 sub local_file { my ($f) = @_; return File::Spec->catfile($BASE_DIR, $f); }
 
+# Flush STDOUT/STDERR promptly so short foreground runs show logs
+select(STDOUT); $|=1; select(STDERR); $|=1;
+
 # ----- Config -----
 my $POLL_SECS        = defined $ENV{WATCH_POLL_SECS} ? 0.0 + $ENV{WATCH_POLL_SECS} : 30;
 my $FLARESOLVERR_URL = $ENV{FLARESOLVERR_URL} // '';
 my $SCRAPEDO_API_KEY = $ENV{SCRAPEDO_API_KEY} // '';
 my $SCRAPEDO_ENDPOINT = $ENV{SCRAPEDO_ENDPOINT} // 'https://api.scrape.do';
+my $SCRAPEDO_RENDER  = $ENV{SCRAPEDO_RENDER} ? 1 : 0;
 my $DEBUG            = $ENV{WATCH_DEBUG} ? 1 : 0;
 
 my $HAWK_BASE = $ENV{HAWK_BASE} // 'https://hawk.live';
@@ -39,7 +43,7 @@ sub flare_get_html {
   my $endpoint = $FLARESOLVERR_URL;
   $endpoint .= '/v1' unless $endpoint =~ m{/v1/?$};
   my $payload = { cmd => 'request.get', url => $url, maxTimeout => 60000, headers => { 'User-Agent' => ($http->{agent}||'curl') } };
-  my $res = $http->post($endpoint, { headers => { 'Content-Type' => 'application/json' }, content => encode_json($payload) });
+  my $res = $http->post($endpoint, { headers => { 'Content-Type' => 'application/json', 'Accept-Encoding' => 'identity' }, content => encode_json($payload) });
   return '' unless $res->{success} && $res->{content};
   my $j = eval { decode_json($res->{content}) };
   return '' if $@ || !$j || ($j->{status}||'') ne 'ok';
@@ -49,16 +53,16 @@ sub flare_get_html {
 sub scrapedo_get_html {
   my ($url) = @_;
   return '' unless $SCRAPEDO_API_KEY;
-  my $api_url = $SCRAPEDO_ENDPOINT . '?token=' . url_encode($SCRAPEDO_API_KEY) . '&url=' . url_encode($url);
-  my $res = $http->get($api_url);
+  my $api_url = $SCRAPEDO_ENDPOINT . '?token=' . url_encode($SCRAPEDO_API_KEY) . '&url=' . url_encode($url) . ($SCRAPEDO_RENDER ? '&render=true' : '');
+  my $res = $http->get($api_url, { headers => { 'Accept-Encoding' => 'identity' } });
   return $res->{success} ? ($res->{content}||'') : '';
 }
 
 sub scrapedo_get_json {
   my ($url) = @_;
   return undef unless $SCRAPEDO_API_KEY;
-  my $api_url = $SCRAPEDO_ENDPOINT . '?token=' . url_encode($SCRAPEDO_API_KEY) . '&url=' . url_encode($url);
-  my $res = $http->get($api_url, { headers => { 'Accept' => 'application/json' } });
+  my $api_url = $SCRAPEDO_ENDPOINT . '?token=' . url_encode($SCRAPEDO_API_KEY) . '&url=' . url_encode($url) . ($SCRAPEDO_RENDER ? '&render=true' : '');
+  my $res = $http->get($api_url, { headers => { 'Accept' => 'application/json', 'Accept-Encoding' => 'identity' } });
   return undef unless $res->{success} && $res->{content};
   my $d = eval { decode_json($res->{content}) };
   return $@ ? undef : $d;
@@ -69,16 +73,19 @@ sub fetch_html {
   my $html = '';
   $html = flare_get_html($url) if $FLARESOLVERR_URL;
   $html = scrapedo_get_html($url) unless $html;
-  $html = ($http->get($url))->{content} unless $html;
+  $html = ($http->get($url, { headers => { 'Accept-Encoding' => 'identity' } }))->{content} unless $html;
   $html //= '';
   $html =~ s/\r//g; return $html;
 }
 
 # ---- Optional JSON discovery ----
 sub discover_app_bundle {
+  print STDOUT "DEBUG: discovering Hawk endpoints from root $HAWK_BASE/\n" if $DEBUG;
   my $root = fetch_html(url_cat($HAWK_BASE,'/'));
   return '' unless $root;
-  my ($bundle) = $root =~ m{build/assets/(app-[A-Za-z0-9]+\.js)}i;
+  my ($bundle) = $root =~ m{build/assets/([A-Za-z0-9_.-]*app[-_][A-Za-z0-9_.-]*\.js)}i;
+  $bundle ||= ($root =~ m{build/assets/([A-Za-z0-9_.-]*main[-_][A-Za-z0-9_.-]*\.js)}i)[0];
+  $bundle ||= ($root =~ m{build/assets/([A-Za-z0-9_.-]*index[-_][A-Za-z0-9_.-]*\.js)}i)[0];
   return $bundle || '';
 }
 
@@ -89,7 +96,7 @@ sub fetch_asset {
     my $html = scrapedo_get_html($url);
     return $html if defined $html && length $html;
   }
-  my $res = $http->get($url);
+  my $res = $http->get($url, { headers => { 'Accept-Encoding' => 'identity' } });
   return ($res->{success} ? ($res->{content}||'') : '');
 }
 
@@ -97,9 +104,9 @@ sub discover_hawk_endpoints {
   # cache
   if (open my $rf,'<',$HAWK_API_CACHE){ my $u=<$rf>; close $rf; $u =~ s/\s+//g; return [$u] if $u; }
   my $bundle = discover_app_bundle();
-  return [] unless $bundle;
+  if (!$bundle) { print STDOUT "DEBUG: no app bundle found on root; endpoints discovery will be limited\n" if $DEBUG; return []; }
   my $js = fetch_asset($bundle);
-  return [] unless $js;
+  if (!$js) { print STDOUT "DEBUG: failed to fetch bundle $bundle\n" if $DEBUG; return []; }
   my %seen; my @candidates;
   while ($js =~ m{https?://[^"'\)\s]+}g) {
     my $u = $&;
@@ -111,6 +118,7 @@ sub discover_hawk_endpoints {
     my $p=$1; next unless $p =~ /(^\/api|match|live)/i; my $u=url_cat($HAWK_BASE,$p);
     next if $seen{$u}++; push @candidates,$u;
   }
+  print STDOUT sprintf("DEBUG: discovered %d candidate endpoints\n", scalar(@candidates)) if $DEBUG;
   if (@candidates){ if (open my $wf,'>',$HAWK_API_CACHE){ print $wf $candidates[0]; close $wf; } }
   return \@candidates;
 }
@@ -423,11 +431,13 @@ sub main_loop {
   my %seen;
   while (1) {
     my $checked=0; my $found=0;
+    print STDOUT "DEBUG: poll start\n" if $DEBUG;
 
     # Try JSON endpoints discovered from app bundle
     my $apis = discover_hawk_endpoints();
     my $handled = 0;
     if ($apis && ref $apis eq 'ARRAY' && @$apis) {
+      print STDOUT sprintf("DEBUG: trying %d JSON endpoints\n", scalar(@$apis)) if $DEBUG;
       for my $api (@$apis) {
         my $data = fetch_json($api);
         next unless $data;
@@ -496,10 +506,12 @@ sub main_loop {
 
     # Fallback to HTML if no JSON candidates matched
     if (!$handled) {
+      print STDOUT "DEBUG: no JSON handled; falling back to HTML\n" if $DEBUG;
       my $live_html='';
       for my $p (@HAWK_LIVE_PATHS){ my $u=url_cat($HAWK_BASE,$p); $live_html = fetch_html($u); last if $live_html && $live_html =~ /match/i; }
       if ($live_html) {
         my $urls = parse_live_links($live_html);
+        print STDOUT sprintf("DEBUG: found %d live match links on root\n", scalar(@$urls)) if $DEBUG;
         for my $u (@$urls){
           $checked++;
           my $html = fetch_html($u); next unless $html && $html =~ /hero|pick|draft/i;
