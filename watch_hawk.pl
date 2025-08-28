@@ -103,24 +103,23 @@ sub fetch_asset {
 }
 
 sub discover_hawk_endpoints {
-  # cache
-  if (open my $rf,'<',$HAWK_API_CACHE){ my $u=<$rf>; close $rf; $u =~ s/\s+//g; return [$u] if $u; }
-  my $bundle = discover_app_bundle();
-  if (!$bundle) { print STDOUT "DEBUG: no app bundle found on root; endpoints discovery will be limited\n" if $DEBUG; return []; }
-  my $js = fetch_asset($bundle);
-  if (!$js) { print STDOUT "DEBUG: failed to fetch bundle $bundle\n" if $DEBUG; return []; }
   my %seen; my @candidates;
-  while ($js =~ m{https?://[^"'\)\s]+}g) {
-    my $u = $&;
-    next unless $u =~ /(api|match|live)/i;
-    next if $seen{$u}++;
-    push @candidates, $u;
-  }
-  while ($js =~ m{['"](/[^'"\)\s]+)['"]}g) {
-    my $p=$1; next unless $p =~ /(^\/api|match|live)/i; my $u=url_cat($HAWK_BASE,$p);
-    next if $seen{$u}++; push @candidates,$u;
-  }
-  print STDOUT sprintf("DEBUG: discovered %d candidate endpoints\n", scalar(@candidates)) if $DEBUG;
+  # use cached primary if present
+  if (open my $rf,'<',$HAWK_API_CACHE){ my $u=<$rf>; close $rf; $u =~ s/\s+//g; if ($u){ $seen{$u}=1; push @candidates,$u; print STDOUT "DEBUG: using cached endpoint $u\n" if $DEBUG; } }
+  # also try discovery every poll to avoid stale cache
+  my $bundle = discover_app_bundle();
+  if ($bundle) {
+    my $js = fetch_asset($bundle);
+    if ($js) {
+      while ($js =~ m{https?://[^"'\)\s]+}g) {
+        my $u = $&; next unless $u =~ /(api|match|live)/i; next if $seen{$u}++; push @candidates, $u;
+      }
+      while ($js =~ m{['"](/[^'"\)\s]+)['"]}g) {
+        my $p=$1; next unless $p =~ /(^\/api|match|live)/i; my $u=url_cat($HAWK_BASE,$p); next if $seen{$u}++; push @candidates,$u;
+      }
+    } else { print STDOUT "DEBUG: failed to fetch bundle $bundle\n" if $DEBUG; }
+  } else { print STDOUT "DEBUG: no app bundle found on root; endpoints discovery limited to cache\n" if $DEBUG; }
+  print STDOUT sprintf("DEBUG: candidate endpoints: %s\n", join(', ', @candidates)) if $DEBUG && @candidates;
   if (@candidates){ if (open my $wf,'>',$HAWK_API_CACHE){ print $wf $candidates[0]; close $wf; } }
   return \@candidates;
 }
@@ -131,9 +130,12 @@ sub fetch_json {
     my $dj = scrapedo_get_json($url);
     return $dj if $dj;
   }
-  my $res=$http->get($url, { headers => { 'Accept'=>'application/json' } });
-  return undef unless $res->{success} && $res->{content};
-  my $d=eval{ decode_json($res->{content}) }; return $@ ? undef : $d;
+  my $res=$http->get($url, { headers => { 'Accept'=>'application/json', 'Accept-Encoding'=>'identity' } });
+  if (!$res->{success}){ print STDOUT sprintf("DEBUG: GET %s failed status=%s reason=%s\n", $url, ($res->{status}||'?'), ($res->{reason}||'?')) if $DEBUG; return undef }
+  my $content = $res->{content} // '';
+  if ($DEBUG){ my $len = length($content||''); print STDOUT sprintf("DEBUG: GET %s ok, bytes=%d\n", $url, $len); }
+  return undef unless $content;
+  my $d=eval{ decode_json($content) }; if ($@){ print STDOUT "DEBUG: JSON decode error\n" if $DEBUG; return undef } return $d;
 }
 
 sub find_match_array_in_hash {
