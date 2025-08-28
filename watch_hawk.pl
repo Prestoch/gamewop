@@ -231,8 +231,13 @@ sub any_hero_adv_threshold{ my($E,$cond,$thr)=@_; return 0 unless defined $thr &
 sub parse_live_links {
   my ($html) = @_;
   my %seen; my @urls;
-  while ($html =~ m{href\s*=\s*["'](\/[^"'\s#?]*match[^"'\s]*)["']}ig) {
+  while ($html =~ m{<a[^>]+href\s*=\s*["']([^"']+)["'][^>]*>}ig) {
     my $p=$1; next if $seen{$p}++;
+    next unless $p =~ m{^/};
+    next if $p =~ m{\.(?:css|js|png|jpe?g|svg|webp|ico)(?:\?|$)}i;
+    my $is_matchish = ($p =~ m{/(?:match|matches|game|live)/}i) || ($p =~ m{/dota(?:-?2)?}i);
+    my $has_id     = ($p =~ m{/(\d{4,}|\d+)(?:/|$)});
+    next unless $is_matchish || $has_id;
     push @urls, url_cat($HAWK_BASE,$p);
   }
   return \@urls;
