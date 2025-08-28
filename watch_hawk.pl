@@ -247,7 +247,23 @@ sub parse_live_links {
 sub extract_picks_from_html {
   my ($html) = @_;
   my @names;
+  # 1) alt/title
   while ($html =~ m{<(?:img|span|div)[^>]+(?:alt|title)\s*=\s*"([^"]+?)"[^>]*>}ig) { push @names, $1; }
+  # 2) data attributes
+  while ($html =~ m{\bdata-(?:hero|hero-name|heroname)\s*=\s*"([^"]+?)"}ig) { push @names, $1; }
+  # 3) image src with hero slug
+  while ($html =~ m{<img[^>]+src\s*=\s*"([^"]+)"[^>]*>}ig) {
+    my $u=$1; next unless $u =~ m{/(hero|heroes|portraits|icons|images)/}i;
+    my ($seg) = $u =~ m{/([A-Za-z0-9_\-]+)\.(?:png|jpg|jpeg|webp|svg)(?:\?|$)}i;
+    if ($seg){ my $s=$seg; $s =~ tr/_\-/  /; push @names, $s; }
+  }
+  # 4) inline style background-image
+  while ($html =~ m{style\s*=\s*"[^"]*url\(([^\)]+)\)[^"]*"}ig){
+    my $u=$1; $u =~ s/^['"]|['"]$//g; next unless $u =~ m{/(hero|heroes|portraits|icons|images)/}i;
+    my ($seg) = $u =~ m{/([A-Za-z0-9_\-]+)\.(?:png|jpg|jpeg|webp|svg)(?:\?|$)}i;
+    if ($seg){ my $s=$seg; $s =~ tr/_\-/  /; push @names, $s; }
+  }
+  # Map to hero ids
   my @ids;
   for my $n (@names){ my $idx=hero_index_by_name($n); push @ids,$idx if $idx>=0; }
   my @uniq; my %seen;
@@ -564,7 +580,7 @@ sub main_loop {
         for my $u (@all_urls){
           $checked++;
           print STDOUT "DEBUG: fetch match -> $u\n" if $DEBUG;
-          my $html = fetch_html($u); next unless $html && $html =~ /hero|pick|draft|Radiant|Dire/i;
+          my $html = fetch_html($u); next unless $html && $html =~ /hero|pick|draft|Radiant|Dire|background-image|data-hero/i;
           my ($a,$b) = extract_picks_from_html($html); next unless $a && $b && (@$a+@$b)>=2;
           my ($mid) = $u =~ m{/(\d+)(?:/|$)}; $mid ||= '';
           my $key = ($mid ? ($mid.'#') : '') . join(',',@$a).'|'.join(',',@$b); next if $seen{$key}++;
