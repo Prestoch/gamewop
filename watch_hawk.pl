@@ -337,6 +337,33 @@ sub extract_picks_from_jsonish {
   return ([],[]);
 }
 
+sub match_id_from_url {
+  my ($u)=@_; return ($u =~ m{/(\d+)(?:/|$)}) ? $1 : '';
+}
+
+sub try_known_match_json {
+  my ($mid) = @_;
+  return ([],[]) unless $mid;
+  my @paths = (
+    "/api/matches/$mid",
+    "/api/dota-2/matches/$mid",
+    "/api/dota2/matches/$mid",
+    "/en/api/matches/$mid",
+    "/en/api/dota-2/matches/$mid",
+    "/ru/api/dota-2/matches/$mid",
+    "/api/v1/matches/$mid",
+  );
+  for my $p (@paths){
+    my $url = url_cat($HAWK_BASE,$p);
+    print STDOUT "DEBUG: try match JSON -> $url\n" if $DEBUG;
+    my $d = fetch_json($url);
+    next unless $d;
+    my ($a,$b) = extract_picks_from_jsonish($d);
+    if (($a&&$b) && (@$a+@$b)>=2){ return ($a,$b); }
+  }
+  return ([],[]);
+}
+
 sub extract_team_names_from_html {
   my ($html) = @_;
   my ($A,$B)=('','');
@@ -649,6 +676,10 @@ sub main_loop {
             my $objs = extract_json_candidates_from_html($html);
             if ($DEBUG) { print STDOUT sprintf("DEBUG: page json candidates=%d\n", scalar(@$objs)); }
             for my $o (@$objs){ my ($aa,$bb) = extract_picks_from_jsonish($o); if (($aa&&$bb) && (@$aa+@$bb)>=2){ ($a,$b)=($aa,$bb); last; } }
+          }
+          if ((!$a || !$b || (@$a+@$b)<2)){
+            my $mid = match_id_from_url($u);
+            if ($mid){ my ($aa,$bb) = try_known_match_json($mid); if (($aa&&$bb) && (@$aa+@$bb)>=2){ ($a,$b)=($aa,$bb); } }
           }
           next unless $a && $b && (@$a+@$b)>=2;
           my ($mid) = $u =~ m{/(\d+)(?:/|$)}; $mid ||= '';
