@@ -543,25 +543,22 @@ sub main_loop {
     # Fallback to HTML if no JSON candidates matched
     if (!$handled) {
       print STDOUT "DEBUG: no JSON handled; falling back to HTML\n" if $DEBUG;
-      my $live_html='';
+      my %seen_url; my @all_urls;
       for my $p (@HAWK_LIVE_PATHS){
-        my $u=url_cat($HAWK_BASE,$p);
-        print STDOUT "DEBUG: fetch root -> $u\n" if $DEBUG;
-        $live_html = fetch_html($u);
-        if ($live_html && $live_html =~ /(match|live|dota)/i){ last; }
-        # try alternative language prefixes
-        for my $lang (qw/en ru/){
-          my $v=url_cat($HAWK_BASE, $p =~ m{^/} ? "/$lang".$p : "/$lang/$p");
-          print STDOUT "DEBUG: fetch root -> $v\n" if $DEBUG;
-          $live_html = fetch_html($v);
-          last if $live_html && $live_html =~ /(match|live|dota)/i;
+        my @variants; push @variants, url_cat($HAWK_BASE,$p);
+        for my $lang (qw/en ru/){ push @variants, url_cat($HAWK_BASE, $p =~ m{^/} ? "/$lang".$p : "/$lang/$p"); }
+        for my $root (@variants){
+          print STDOUT "DEBUG: fetch root -> $root\n" if $DEBUG;
+          my $html = fetch_html($root);
+          next unless $html && $html =~ /(match|live|dota)/i;
+          my $urls = parse_live_links($html);
+          print STDOUT sprintf("DEBUG: root %s links=%d\n", $root, scalar(@$urls)) if $DEBUG;
+          for my $u (@$urls){ next if $seen_url{$u}++; push @all_urls, $u; }
         }
-        last if $live_html && $live_html =~ /(match|live|dota)/i;
       }
-      if ($live_html) {
-        my $urls = parse_live_links($live_html);
-        print STDOUT sprintf("DEBUG: found %d live match links on root\n", scalar(@$urls)) if $DEBUG;
-        for my $u (@$urls){
+      if (@all_urls) {
+        print STDOUT sprintf("DEBUG: found %d total live match links\n", scalar(@all_urls)) if $DEBUG;
+        for my $u (@all_urls){
           $checked++;
           print STDOUT "DEBUG: fetch match -> $u\n" if $DEBUG;
           my $html = fetch_html($u); next unless $html && $html =~ /hero|pick|draft|Radiant|Dire/i;
