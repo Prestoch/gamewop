@@ -278,6 +278,12 @@ sub extract_picks_from_html {
 }
 
 # ----- JSON-from-HTML helpers -----
+sub html_unescape {
+  my ($s)=@_; $s//= '';
+  $s =~ s/&quot;/"/g; $s =~ s/&#34;/"/g; $s =~ s/&apos;/'/g; $s =~ s/&#39;/'/g;
+  $s =~ s/&lt;/</g; $s =~ s/&gt;/>/g; $s =~ s/&amp;/&/g;
+  return $s;
+}
 sub _extract_braced {
   my ($src, $start_pos, $open, $close) = @_;
   my $len = length($src); my $depth=0; my $in_str=0; my $esc=0; my $end=-1;
@@ -302,6 +308,8 @@ sub extract_json_candidates_from_html {
   while ($html =~ m{<script[^>]+id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)</script>}ig){ my $txt=$1; $txt =~ s/^\s+|\s+$//g; my $o=eval{ decode_json($txt) }; push @objs,$o if $o && !$@; }
   # 3) application/json scripts
   while ($html =~ m{<script[^>]+type=["']application/json["'][^>]*>([\s\S]*?)</script>}ig){ my $txt=$1; $txt =~ s/^\s+|\s+$//g; my $o=eval{ decode_json($txt) }; push @objs,$o if $o && !$@; }
+  # 4) Inertia-style data-page attribute
+  while ($html =~ m{data-page\s*=\s*(["'])([\s\S]*?)\1}ig){ my $txt=html_unescape($2); my $o=eval{ decode_json($txt) }; push @objs,$o if $o && !$@; }
   # 4) Generic: search for first big object that mentions picks/heroes
   if ($html =~ /(picks?|heroes?)/i){
     my $pos = index(lc($html),'pick'); $pos = index(lc($html),'hero') if $pos<0;
@@ -335,6 +343,29 @@ sub extract_picks_from_jsonish {
   @a=@a[0..4] if @a>5; @b=@b[0..4] if @b>5;
   return (\@a,\@b) if @a+@b>=2;
   return ([],[]);
+}
+
+sub extract_from_inertia_page {
+  my ($o) = @_;
+  return ([],[],undef,undef,undef) unless ref $o eq 'HASH' && ref $o->{props} eq 'HASH' && ref $o->{props}{init_match} eq 'HASH';
+  my $m = $o->{props}{init_match};
+  my (@a,@b);
+  if (ref $m->{picks} eq 'ARRAY'){
+    for my $e (@{ $m->{picks} }){
+      next unless ref $e eq 'HASH';
+      my $isRad = $e->{is_radiant} ? 1 : 0;
+      my $name = '';
+      if (ref $e->{hero} eq 'HASH'){ $name = $e->{hero}{name} // ''; }
+      $name ||= $e->{hero_name} // '';
+      my $idx = $name ? hero_index_by_name($name) : -1; next unless $idx>=0;
+      if ($isRad) { push @a,$idx; } else { push @b,$idx; }
+    }
+  }
+  @a=@a[0..4] if @a>5; @b=@b[0..4] if @b>5;
+  my $teamA = (ref $m->{team1} eq 'HASH') ? ($m->{team1}{name} // '') : '';
+  my $teamB = (ref $m->{team2} eq 'HASH') ? ($m->{team2}{name} // '') : '';
+  my $series = $m->{championship_name} // '';
+  return ((@a+@b)>=2 ? (\@a,\@b,$teamA,$teamB,$series) : ([],[],$teamA,$teamB,$series));
 }
 
 sub match_id_from_url {
@@ -672,10 +703,15 @@ sub main_loop {
           print STDOUT "DEBUG: fetch match -> $u\n" if $DEBUG;
           my $html = fetch_html($u); next unless $html;
           my ($a,$b) = extract_picks_from_html($html);
+          my ($teamAName,$teamBName,$series) = ('','','');
           if ((!$a || !$b || (@$a+@$b)<2)){
             my $objs = extract_json_candidates_from_html($html);
             if ($DEBUG) { print STDOUT sprintf("DEBUG: page json candidates=%d\n", scalar(@$objs)); }
             for my $o (@$objs){ my ($aa,$bb) = extract_picks_from_jsonish($o); if (($aa&&$bb) && (@$aa+@$bb)>=2){ ($a,$b)=($aa,$bb); last; } }
+          }
+          if ((!$a || !$b || (@$a+@$b)<2)){
+            my $objs = extract_json_candidates_from_html($html);
+            for my $o (@$objs){ my ($aa,$bb,$tA,$tB,$ser) = extract_from_inertia_page($o); if (($aa&&$bb) && (@$aa+@$bb)>=2){ ($a,$b)=($aa,$bb); $teamAName=$tA if $tA; $teamBName=$tB if $tB; $series=$ser if $ser; last; } }
           }
           if ((!$a || !$b || (@$a+@$b)<2)){
             my $mid = match_id_from_url($u);
