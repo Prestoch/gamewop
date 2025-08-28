@@ -25,7 +25,9 @@ my $SCRAPEDO_RENDER  = $ENV{SCRAPEDO_RENDER} ? 1 : 0;
 my $DEBUG            = $ENV{WATCH_DEBUG} ? 1 : 0;
 
 my $HAWK_BASE = $ENV{HAWK_BASE} // 'https://hawk.live';
-my @HAWK_LIVE_PATHS = split /\s*,\s*/, ($ENV{HAWK_PATHS} // '/, /dota2, /dota-2, /en, /en/dota2');
+my @HAWK_LIVE_PATHS = split /\s*,\s*/, (
+  $ENV{HAWK_PATHS} // '/, /dota2, /dota-2, /en, /en/dota2, /en/dota-2, /en/dota-2/matches, /dota-2/matches, /dota2/matches, /en/dota2/matches, /dota-2/live, /en/dota-2/live, /dota2/live, /en/dota2/live'
+);
 my $HAWK_API_CACHE = local_file('.hawk_endpoint');
 
 my $http = HTTP::Tiny->new(
@@ -134,6 +136,18 @@ sub fetch_json {
   my $d=eval{ decode_json($res->{content}) }; return $@ ? undef : $d;
 }
 
+sub find_match_array_in_hash {
+  my ($h) = @_; return [] unless ref $h eq 'HASH';
+  for my $k (qw/matches live liveMatches events games data list edges items nodes/) {
+    if (ref $h->{$k} eq 'ARRAY' && @{$h->{$k}}) { return $h->{$k}; }
+    if (ref $h->{$k} eq 'HASH') {
+      my $inner = find_match_array_in_hash($h->{$k});
+      return $inner if ref $inner eq 'ARRAY' && @$inner;
+    }
+  }
+  return [];
+}
+
 # ----- Load settings / cs.json -----
 sub load_settings {
   my $p = local_file('settings.json');
@@ -200,7 +214,7 @@ sub any_hero_adv_threshold{ my($E,$cond,$thr)=@_; return 0 unless defined $thr &
 sub parse_live_links {
   my ($html) = @_;
   my %seen; my @urls;
-  while ($html =~ m{href\s*=\s*"(\/[^"\s#?]*match[^"\s]*)"}ig) {
+  while ($html =~ m{href\s*=\s*["'](\/[^"'\s#?]*match[^"'\s]*)["']}ig) {
     my $p=$1; next if $seen{$p}++;
     push @urls, url_cat($HAWK_BASE,$p);
   }
@@ -439,14 +453,14 @@ sub main_loop {
     if ($apis && ref $apis eq 'ARRAY' && @$apis) {
       print STDOUT sprintf("DEBUG: trying %d JSON endpoints\n", scalar(@$apis)) if $DEBUG;
       for my $api (@$apis) {
+        print STDOUT "DEBUG: fetch JSON -> $api\n" if $DEBUG;
         my $data = fetch_json($api);
+        print STDOUT (defined $data ? "DEBUG: got JSON\n" : "DEBUG: no data\n") if $DEBUG;
         next unless $data;
         my $list = [];
         if (ref $data eq 'ARRAY') { $list = $data; }
         elsif (ref $data eq 'HASH') {
-          for my $k (qw/matches live liveMatches events games data list/) {
-            if (ref $data->{$k} eq 'ARRAY') { $list = $data->{$k}; last; }
-          }
+          $list = find_match_array_in_hash($data);
         }
         if (ref $list eq 'ARRAY' && @$list) {
           $handled = 1;
@@ -508,13 +522,19 @@ sub main_loop {
     if (!$handled) {
       print STDOUT "DEBUG: no JSON handled; falling back to HTML\n" if $DEBUG;
       my $live_html='';
-      for my $p (@HAWK_LIVE_PATHS){ my $u=url_cat($HAWK_BASE,$p); $live_html = fetch_html($u); last if $live_html && $live_html =~ /match/i; }
+      for my $p (@HAWK_LIVE_PATHS){
+        my $u=url_cat($HAWK_BASE,$p);
+        print STDOUT "DEBUG: fetch root -> $u\n" if $DEBUG;
+        $live_html = fetch_html($u);
+        last if $live_html && $live_html =~ /(match|live|dota)/i;
+      }
       if ($live_html) {
         my $urls = parse_live_links($live_html);
         print STDOUT sprintf("DEBUG: found %d live match links on root\n", scalar(@$urls)) if $DEBUG;
         for my $u (@$urls){
           $checked++;
-          my $html = fetch_html($u); next unless $html && $html =~ /hero|pick|draft/i;
+          print STDOUT "DEBUG: fetch match -> $u\n" if $DEBUG;
+          my $html = fetch_html($u); next unless $html && $html =~ /hero|pick|draft|Radiant|Dire/i;
           my ($a,$b) = extract_picks_from_html($html); next unless $a && $b && (@$a+@$b)>=2;
           my ($mid) = $u =~ m{/(\d+)(?:/|$)}; $mid ||= '';
           my $key = ($mid ? ($mid.'#') : '') . join(',',@$a).'|'.join(',',@$b); next if $seen{$key}++;
