@@ -85,7 +85,9 @@ sub discover_app_bundle {
   print STDOUT "DEBUG: discovering Hawk endpoints from root $HAWK_BASE/\n" if $DEBUG;
   my $root = fetch_html(url_cat($HAWK_BASE,'/'));
   return '' unless $root;
-  my ($bundle) = $root =~ m{build/assets/([A-Za-z0-9_.-]*app[-_][A-Za-z0-9_.-]*\.js)}i;
+  # Prefer script src entries if present
+  my ($bundle) = $root =~ m{<script[^>]+src=["']/build/assets/([^"']+?\.js)["']}i;
+  $bundle ||= ($root =~ m{build/assets/([A-Za-z0-9_.-]*app[-_][A-Za-z0-9_.-]*\.js)}i)[0];
   $bundle ||= ($root =~ m{build/assets/([A-Za-z0-9_.-]*main[-_][A-Za-z0-9_.-]*\.js)}i)[0];
   $bundle ||= ($root =~ m{build/assets/([A-Za-z0-9_.-]*index[-_][A-Za-z0-9_.-]*\.js)}i)[0];
   return $bundle || '';
@@ -95,8 +97,10 @@ sub fetch_asset {
   my ($path) = @_;
   my $url = url_cat($HAWK_BASE, "/build/assets/$path");
   if ($SCRAPEDO_API_KEY) {
-    my $html = scrapedo_get_html($url);
-    return $html if defined $html && length $html;
+    # Always fetch raw asset without render=true to avoid HTML wrappers
+    my $api_url = $SCRAPEDO_ENDPOINT . '?token=' . url_encode($SCRAPEDO_API_KEY) . '&url=' . url_encode($url);
+    my $r1 = $http->get($api_url, { headers => { 'Accept-Encoding' => 'identity' } });
+    if ($r1->{success} && defined $r1->{content}) { return $r1->{content}; }
   }
   my $res = $http->get($url, { headers => { 'Accept-Encoding' => 'identity' } });
   return ($res->{success} ? ($res->{content}||'') : '');
@@ -120,7 +124,13 @@ sub discover_hawk_endpoints {
     } else { print STDOUT "DEBUG: failed to fetch bundle $bundle\n" if $DEBUG; }
   } else { print STDOUT "DEBUG: no app bundle found on root; endpoints discovery limited to cache\n" if $DEBUG; }
   print STDOUT sprintf("DEBUG: candidate endpoints: %s\n", join(', ', @candidates)) if $DEBUG && @candidates;
-  if (@candidates){ if (open my $wf,'>',$HAWK_API_CACHE){ print $wf $candidates[0]; close $wf; } }
+  # Keep only API-like URLs in cache; avoid caching the site root
+  if (@candidates){
+    my $primary = $candidates[0];
+    if ($primary =~ /api|live|match/i && $primary !~ m{^https?://[^/]+/$}){
+      if (open my $wf,'>',$HAWK_API_CACHE){ print $wf $primary; close $wf; }
+    }
+  }
   return \@candidates;
 }
 
