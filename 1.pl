@@ -139,9 +139,12 @@ sub fetch_with_cf {
     my $payload_obj = {
       cmd => 'request.get',
       url => $url,
-      maxTimeout => 60000,
+      maxTimeout => 90000,
       headers => {
         'User-Agent' => 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+        'Accept' => 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language' => 'en-US,en;q=0.9',
+        'Referer' => 'https://www.dotabuff.com/',
       },
     };
     $payload_obj->{session} = $FLARE_SESSION_ID if $use_session && $FLARE_SESSION_ID;
@@ -357,7 +360,7 @@ sub get_winrates_dotabuff {
 
 sub get_heroes {
   warn "Fetching hero list from Dotabuff via FlareSolverr\n";
-  my $list_url_primary = 'https://www.dotabuff.com/heroes?show=heroes&view=meta&mode=all-pick&date=1y';
+  my $list_url_primary = 'https://www.dotabuff.com/heroes?date=1y';
   # Fallback page removed to avoid facet-based duplicates
 
   my @pairs;
@@ -398,22 +401,35 @@ sub get_heroes {
 
   warn "GET " . $list_url_primary . "\n";
   my $html1 = fetch_with_cf ($list_url_primary);
+  if (defined $html1 && $html1 =~ /Just a moment|cf-browser-verification|Cloudflare|Attention Required/i) {
+    warn "Cloudflare interstitial detected; retrying with session...\n";
+    $ENV{GEN_USE_SESSION} = 1;
+    flare_session_create();
+    $html1 = fetch_with_cf ($list_url_primary);
+  }
   my $count1 = $collect_from_html->($html1);
   warn "Found $count1 hero candidates in meta page\n";
 
   # Fallback URLs if primary yields too few (site variations)
   if ($count1 < 50) {
-    my $alt1 = 'https://www.dotabuff.com/heroes?show=heroes';
+    my $alt1 = 'https://www.dotabuff.com/heroes?date=1y&show=heroes';
     warn "GET " . $alt1 . "\n";
     my $h2 = fetch_with_cf($alt1);
     my $c2 = $collect_from_html->($h2);
     warn "Fallback alt1 found $c2 heroes\n";
     if ($c2 < 50) {
-      my $alt2 = 'https://www.dotabuff.com/heroes';
+      my $alt2 = 'https://www.dotabuff.com/heroes?view=meta&mode=all-pick&date=1y';
       warn "GET " . $alt2 . "\n";
       my $h3 = fetch_with_cf($alt2);
       my $c3 = $collect_from_html->($h3);
       warn "Fallback alt2 found $c3 heroes\n";
+      if ($c3 < 50) {
+        my $alt3 = 'https://www.dotabuff.com/heroes';
+        warn "GET " . $alt3 . "\n";
+        my $h4 = fetch_with_cf($alt3);
+        my $c4 = $collect_from_html->($h4);
+        warn "Fallback alt3 found $c4 heroes\n";
+      }
     }
   }
 
@@ -440,7 +456,20 @@ sub get_heroes {
   # If still clearly wrong, fail fast only when nothing parsed
   if (@pairs < 50) {
     if (@pairs == 0) {
-      die "No heroes parsed from Dotabuff; check FlareSolverr and markup";
+      warn "No heroes parsed from Dotabuff; continuing with fallback hero list (OpenDota)\n";
+      my $od = http_get_json('https://api.opendota.com/api/heroes');
+      if (ref $od eq 'ARRAY' && @$od >= 100) {
+        for my $h (@$od) {
+          next unless ref $h eq 'HASH';
+          my $name = $h->{localized_name} || $h->{name} || '';
+          next unless $name;
+          my $slug = $name; $slug =~ tr/A-Z/a-z/; $slug =~ s/[^a-z0-9]+/-/g; $slug =~ s/^-+|-+$//g;
+          push @pairs, [ normalize_hero_name($name), $slug ];
+        }
+        warn sprintf("OpenDota fallback produced %d heroes\n", scalar @pairs);
+      } else {
+        warn "OpenDota fallback unavailable or too few heroes; aborting\n";
+      }
     } else {
       warn sprintf("Few heroes parsed (%d); continuing anyway\n", scalar @pairs);
     }
