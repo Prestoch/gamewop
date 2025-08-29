@@ -133,9 +133,8 @@ sub fetch_with_cf {
   my ($url) = @_;
 
   if ($FLARESOLVERR_URL && flare_healthy()) {
-    # Use session mode (optional) or one-off request
-    my $use_session = $ENV{GEN_USE_SESSION} ? 1 : 0;
-    if ($use_session) { flare_session_create(); }
+    # Always use a session for Dotabuff
+    flare_session_create();
     my $payload_obj = {
       cmd => 'request.get',
       url => $url,
@@ -147,7 +146,7 @@ sub fetch_with_cf {
         'Referer' => 'https://www.dotabuff.com/',
       },
     };
-    $payload_obj->{session} = $FLARE_SESSION_ID if $use_session && $FLARE_SESSION_ID;
+    $payload_obj->{session} = $FLARE_SESSION_ID if $FLARE_SESSION_ID;
     my $res = $http->post ($FLARESOLVERR_URL, {
       headers => { 'Content-Type' => 'application/json' },
       content => encode_json($payload_obj),
@@ -408,7 +407,7 @@ sub get_heroes {
     $html1 = fetch_with_cf ($list_url_primary);
   }
   my $count1 = $collect_from_html->($html1);
-  warn "Found $count1 hero candidates in meta page\n";
+  warn "Found $count1 hero candidates\n";
 
   # Fallback URLs if primary yields too few (site variations)
   if ($count1 < 50) {
