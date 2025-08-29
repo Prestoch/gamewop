@@ -135,6 +135,9 @@ sub fetch_with_cf {
   if ($FLARESOLVERR_URL && flare_healthy()) {
     # Always use a session for Dotabuff
     flare_session_create();
+    # Be polite to avoid jamming the solver
+    my $ms = defined $ENV{GEN_DELAY_MS} ? 0 + $ENV{GEN_DELAY_MS} : 200;
+    select(undef, undef, undef, $ms/1000.0);
     my $payload_obj = {
       cmd => 'request.get',
       url => $url,
@@ -359,7 +362,7 @@ sub get_winrates_dotabuff {
 
 sub get_heroes {
   warn "Fetching hero list from Dotabuff via FlareSolverr\n";
-  my $list_url_primary = 'https://www.dotabuff.com/heroes?date=1y';
+  my $list_url_primary = 'https://www.dotabuff.com/heroes?show=heroes&view=meta&mode=all-pick&date=1y';
   # Fallback page removed to avoid facet-based duplicates
 
   my @pairs;
@@ -410,31 +413,7 @@ sub get_heroes {
   my $count1 = $collect_from_html->($html1);
   warn "Found $count1 hero candidates\n";
 
-  # Fallback URLs if primary yields too few (site variations)
-  if ($count1 < 50) {
-    my $alt1 = 'https://www.dotabuff.com/heroes?date=1y&show=heroes';
-    warn "GET " . $alt1 . "\n";
-    my $h2 = fetch_with_cf($alt1);
-    if ($ENV{GEN_DUMP}) { if (open my $d, '>', 'dotabuff_heroes_alt1.html') { print $d $h2 // ''; close $d; } }
-    my $c2 = $collect_from_html->($h2);
-    warn "Fallback alt1 found $c2 heroes\n";
-    if ($c2 < 50) {
-      my $alt2 = 'https://www.dotabuff.com/heroes/meta?date=1y';
-      warn "GET " . $alt2 . "\n";
-      my $h3 = fetch_with_cf($alt2);
-      if ($ENV{GEN_DUMP}) { if (open my $d, '>', 'dotabuff_heroes_alt2.html') { print $d $h3 // ''; close $d; } }
-      my $c3 = $collect_from_html->($h3);
-      warn "Fallback alt2 found $c3 heroes\n";
-      if ($c3 < 50) {
-        my $alt3 = 'https://www.dotabuff.com/heroes';
-        warn "GET " . $alt3 . "\n";
-        my $h4 = fetch_with_cf($alt3);
-        if ($ENV{GEN_DUMP}) { if (open my $d, '>', 'dotabuff_heroes_alt3.html') { print $d $h4 // ''; close $d; } }
-        my $c4 = $collect_from_html->($h4);
-        warn "Fallback alt3 found $c4 heroes\n";
-      }
-    }
-  }
+  # No alternate pages per your requirement
 
   # Final fallback: build from image slugs if anchors failed but images exist
   if (@pairs < 50 && (scalar keys %slug_to_img) >= 50) {
