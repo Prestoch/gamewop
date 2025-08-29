@@ -455,20 +455,7 @@ sub get_heroes {
   # If still clearly wrong, fail fast only when nothing parsed
   if (@pairs < 50) {
     if (@pairs == 0) {
-      warn "No heroes parsed from Dotabuff; continuing with fallback hero list (OpenDota)\n";
-      my $od = http_get_json('https://api.opendota.com/api/heroes');
-      if (ref $od eq 'ARRAY' && @$od >= 100) {
-        for my $h (@$od) {
-          next unless ref $h eq 'HASH';
-          my $name = $h->{localized_name} || $h->{name} || '';
-          next unless $name;
-          my $slug = $name; $slug =~ tr/A-Z/a-z/; $slug =~ s/[^a-z0-9]+/-/g; $slug =~ s/^-+|-+$//g;
-          push @pairs, [ normalize_hero_name($name), $slug ];
-        }
-        warn sprintf("OpenDota fallback produced %d heroes\n", scalar @pairs);
-      } else {
-        warn "OpenDota fallback unavailable or too few heroes; aborting\n";
-      }
+      die "No heroes parsed from Dotabuff; check FlareSolverr and markup";
     } else {
       warn sprintf("Few heroes parsed (%d); continuing anyway\n", scalar @pairs);
     }
