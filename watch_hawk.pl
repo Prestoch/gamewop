@@ -190,8 +190,14 @@ sub extract_json_array {
   return substr($src, $i, $end - $i + 1);
 }
 sub load_cs {
-  my $p = local_file('cs.json');
-  open my $fh,'<',$p or die "Missing cs.json\n";
+  my $p_json = local_file('cs.json');
+  my $p_js   = local_file('cs.js');
+  my $p;
+  if (-e $p_json && -e $p_js) { $p = (-M $p_json) < (-M $p_js) ? $p_json : $p_js; }
+  elsif (-e $p_json) { $p = $p_json; }
+  elsif (-e $p_js)   { $p = $p_js; }
+  else { die "Missing cs.json/cs.js\n"; }
+  open my $fh,'<',$p or die "Failed to open $p\n";
   local $/; my $t=<$fh>; close $fh;
   my $h   = extract_json_array($t,'var heroes');
   my $bg  = extract_json_array($t,'heroes_bg');
@@ -203,6 +209,10 @@ sub load_cs {
   if ($bg) { @HEROES_BG = @{ $j->decode($bg) }; }
   @HEROES_WR = @{ $j->decode($wr) };
   @WIN_RATES = @{ $j->decode($mat) };
+  if ($DEBUG) {
+    my $cnt=@HEROES_WR||0; my $sum=0; $sum+=$_ for @HEROES_WR; my $avg = $cnt?($sum/$cnt):0;
+    print STDOUT sprintf("DEBUG: loaded %d heroes from %s; avg WR=%.2f\n", scalar(@HEROES), $p, $avg);
+  }
 }
 
 sub normalize_name { my ($n)=@_; $n//= ''; $n =~ s/\s+/ /g; $n =~ s/^\s+|\s+$//g; $n =~ s/'//g; $n =~ s/\./ /g; $n =~ s/-/ /g; $n =~ tr/A-Z/a-z/; return $n; }
@@ -731,7 +741,13 @@ sub main_loop {
           my $tA = per_hero_totals($a,$b); my $tB = per_hero_totals($b,$a);
           my ($sumA2,$sumB2)=(0,0); $sumA2+=$_ for @$tA; $sumB2+=$_ for @$tB;
           my $diff_alert = $sumA2 - $sumB2;
-          print STDOUT sprintf("DEBUG: sums(A=%.2f,B=%.2f) diff_alert=%.2f ta_min=%s ta_max=%s\n", $sumA2,$sumB2,$diff_alert, (defined $ta_min?$ta_min:'-'), (defined $ta_max?$ta_max:'-')) if $DEBUG;
+          if ($DEBUG) {
+            my $wa = join(', ', map { sprintf('%.2f', $_) } @$tA);
+            my $wb = join(', ', map { sprintf('%.2f', $_) } @$tB);
+            print STDOUT sprintf("DEBUG: totals A [%s]\n", $wa);
+            print STDOUT sprintf("DEBUG: totals B [%s]\n", $wb);
+            print STDOUT sprintf("DEBUG: sums(A=%.2f,B=%.2f) diff_alert=%.2f ta_min=%s ta_max=%s\n", $sumA2,$sumB2,$diff_alert, (defined $ta_min?$ta_min:'-'), (defined $ta_max?$ta_max:'-'));
+          }
           my @conds; if($ta_en && (defined $ta_min || defined $ta_max)){ my $ok=0; $ok||=(defined $ta_min && $diff_alert>=$ta_min); $ok||=(defined $ta_max && $diff_alert<=$ta_max); push @conds,$ok?1:0 }
           if($ha_en && defined $ha_thr){ my $ok = any_hero_adv_threshold($b,$ha_cond,$ha_thr); push @conds,$ok?1:0 }
           if($wh_en && %wh){ my $ok=0; for my $hid (@$a,@$b){ next unless $hid>=0; my $nm=normalize_name($HEROES[$hid]||''); if($wh{$nm}){ $ok=1; last } } push @conds,$ok?1:0 }
