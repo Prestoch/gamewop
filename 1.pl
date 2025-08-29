@@ -406,6 +406,7 @@ sub get_heroes {
     flare_session_create();
     $html1 = fetch_with_cf ($list_url_primary);
   }
+  if ($ENV{GEN_DUMP}) { if (open my $d, '>', 'dotabuff_heroes.html') { print $d $html1 // ''; close $d; } }
   my $count1 = $collect_from_html->($html1);
   warn "Found $count1 hero candidates\n";
 
@@ -414,18 +415,21 @@ sub get_heroes {
     my $alt1 = 'https://www.dotabuff.com/heroes?date=1y&show=heroes';
     warn "GET " . $alt1 . "\n";
     my $h2 = fetch_with_cf($alt1);
+    if ($ENV{GEN_DUMP}) { if (open my $d, '>', 'dotabuff_heroes_alt1.html') { print $d $h2 // ''; close $d; } }
     my $c2 = $collect_from_html->($h2);
     warn "Fallback alt1 found $c2 heroes\n";
     if ($c2 < 50) {
-      my $alt2 = 'https://www.dotabuff.com/heroes?view=meta&mode=all-pick&date=1y';
+      my $alt2 = 'https://www.dotabuff.com/heroes/meta?date=1y';
       warn "GET " . $alt2 . "\n";
       my $h3 = fetch_with_cf($alt2);
+      if ($ENV{GEN_DUMP}) { if (open my $d, '>', 'dotabuff_heroes_alt2.html') { print $d $h3 // ''; close $d; } }
       my $c3 = $collect_from_html->($h3);
       warn "Fallback alt2 found $c3 heroes\n";
       if ($c3 < 50) {
         my $alt3 = 'https://www.dotabuff.com/heroes';
         warn "GET " . $alt3 . "\n";
         my $h4 = fetch_with_cf($alt3);
+        if ($ENV{GEN_DUMP}) { if (open my $d, '>', 'dotabuff_heroes_alt3.html') { print $d $h4 // ''; close $d; } }
         my $c4 = $collect_from_html->($h4);
         warn "Fallback alt3 found $c4 heroes\n";
       }
