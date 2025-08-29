@@ -718,6 +718,12 @@ sub main_loop {
             if ($mid){ my ($aa,$bb) = try_known_match_json($mid); if (($aa&&$bb) && (@$aa+@$bb)>=2){ ($a,$b)=($aa,$bb); } }
           }
           next unless $a && $b && (@$a+@$b)>=2;
+          if ($DEBUG) {
+            my $la = join(', ', map { my $nm=$HEROES[$_]//'?'; my $wr=defined $HEROES_WR[$_] ? sprintf('%.2f',$HEROES_WR[$_]) : 'NA'; "$nm:$wr" } @$a);
+            my $lb = join(', ', map { my $nm=$HEROES[$_]//'?'; my $wr=defined $HEROES_WR[$_] ? sprintf('%.2f',$HEROES_WR[$_]) : 'NA'; "$nm:$wr" } @$b);
+            print STDOUT "DEBUG: picks A [$la]\n";
+            print STDOUT "DEBUG: picks B [$lb]\n";
+          }
           my ($mid) = $u =~ m{/(\d+)(?:/|$)}; $mid ||= '';
           my $key = ($mid ? ($mid.'#') : '') . join(',',@$a).'|'.join(',',@$b); next if $seen{$key}++;
           $found++;
