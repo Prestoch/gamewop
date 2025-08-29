@@ -666,8 +666,22 @@ sub main_loop {
             my $scoreA=team_score(\@a,\@b); my $scoreB=team_score(\@b,\@a); my $diff=$scoreA-$scoreB;
             my $tA = per_hero_totals(\@a,\@b); my $tB = per_hero_totals(\@b,\@a);
             my ($sumA2,$sumB2)=(0,0); $sumA2+=$_ for @$tA; $sumB2+=$_ for @$tB;
+            my $advA_arr = per_hero_advantages(\@a,\@b); my $advB_arr = per_hero_advantages(\@b,\@a);
+            my ($advSumA,$advSumB)=(0,0); $advSumA+=$_ for @$advA_arr; $advSumB+=$_ for @$advB_arr;
+            my $diff_adv = $advSumA - $advSumB;
             my $diff_alert = $sumA2 - $sumB2;
-            print STDOUT sprintf("DEBUG: sums(A=%.2f,B=%.2f) diff_alert=%.2f ta_min=%s ta_max=%s\n", $sumA2,$sumB2,$diff_alert, (defined $ta_min?$ta_min:'-'), (defined $ta_max?$ta_max:'-')) if $DEBUG;
+            if (abs($diff_alert) < 1e-6 && abs($diff_adv) > 1e-6) { $diff_alert = $diff_adv; }
+            if ($DEBUG) {
+              my $wa = join(', ', map { sprintf('%.2f', $_) } @$tA);
+              my $wb = join(', ', map { sprintf('%.2f', $_) } @$tB);
+              my $aa = join(', ', map { sprintf('%.2f', $_) } @$advA_arr);
+              my $ab = join(', ', map { sprintf('%.2f', $_) } @$advB_arr);
+              print STDOUT sprintf("DEBUG: totals A [%s]\n", $wa);
+              print STDOUT sprintf("DEBUG: totals B [%s]\n", $wb);
+              print STDOUT sprintf("DEBUG: adv A [%s]\n", $aa);
+              print STDOUT sprintf("DEBUG: adv B [%s]\n", $ab);
+              print STDOUT sprintf("DEBUG: sums(A=%.2f,B=%.2f) diff_alert=%.2f ta_min=%s ta_max=%s\n", $sumA2,$sumB2,$diff_alert, (defined $ta_min?$ta_min:'-'), (defined $ta_max?$ta_max:'-'));
+            }
             my @conds; if($ta_en && (defined $ta_min || defined $ta_max)){ my $ok=0; $ok||=(defined $ta_min && $diff_alert>=$ta_min); $ok||=(defined $ta_max && $diff_alert<=$ta_max); push @conds,$ok?1:0 }
             if($ha_en && defined $ha_thr){ my $ok = any_hero_adv_threshold(\@b,$ha_cond,$ha_thr); push @conds,$ok?1:0 }
             if($wh_en && %wh){ my $ok=0; for my $hid (@a,@b){ next unless $hid>=0; my $nm=normalize_name($HEROES[$hid]||''); if($wh{$nm}){ $ok=1; last } } push @conds,$ok?1:0 }
